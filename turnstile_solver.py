@@ -89,6 +89,7 @@ class TurnstileSolver:
             print("1. 服务是否正常运行（docker ps | grep cloudflyer）")
             print("2. 服务地址是否正确（CLOUDFREED_BASE_URL 环境变量）")
             print("3. 网络连接是否正常")
+            print("4. 如果使用Docker，请使用宿主机IP地址而不是localhost")
             return False
         except Exception as e:
             print(f"CloudFreed 服务健康检查失败: {e}")
