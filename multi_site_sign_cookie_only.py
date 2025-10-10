@@ -6,7 +6,7 @@ import json
 import re
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
-from curl_cffi import requests
+import requests
 
 # 导入验证码解决器
 try:
