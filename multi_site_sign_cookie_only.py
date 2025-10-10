@@ -132,7 +132,19 @@ def load_cookies_from_file(site_name, account_index=None):
         cookie_file = get_cookie_file_path(site_name, account_index)
         if os.path.exists(cookie_file):
             with open(cookie_file, "r", encoding='utf-8') as f:
-                return f.read().strip()
+                content = f.read().strip()
+                # 处理可能的编码问题
+                if content:
+                    return content
+    except UnicodeDecodeError:
+        # 如果UTF-8解码失败，尝试其他编码
+        try:
+            with open(cookie_file, "r", encoding='gbk') as f:
+                content = f.read().strip()
+                if content:
+                    return content
+        except:
+            pass
     except Exception as e:
         print(f"从文件读取Cookie失败: {e}")
     return ""
@@ -142,6 +154,11 @@ def save_cookie_to_file(site_name, cookie_str, account_index=None):
     try:
         cookie_file = get_cookie_file_path(site_name, account_index)
         os.makedirs(os.path.dirname(cookie_file), exist_ok=True)
+        
+        # 确保cookie_str是字符串，处理可能的编码问题
+        if isinstance(cookie_str, bytes):
+            cookie_str = cookie_str.decode('utf-8', errors='ignore')
+        
         with open(cookie_file, "w", encoding='utf-8') as f:
             f.write(cookie_str)
         print(f"Cookie 已成功保存到文件: {cookie_file}")
@@ -166,7 +183,33 @@ def check_cookie_validity(site_config, cookie_str):
             headers=headers
         )
         
-        return response.status_code == 200 and "credit" in response.text
+        # 正确处理响应编码，特别是中文字符
+        if response.encoding is None:
+            response.encoding = 'utf-8'
+        
+        # 确保响应文本正确解码，处理所有可能的编码问题
+        try:
+            response_text = response.text
+        except UnicodeDecodeError as decode_error:
+            # 如果默认编码失败，尝试其他常见编码
+            try:
+                response.encoding = 'gbk'
+                response_text = response.text
+            except UnicodeDecodeError:
+                try:
+                    response.encoding = 'gb2312'
+                    response_text = response.text
+                except UnicodeDecodeError:
+                    # 如果所有编码都失败，使用原始字节内容
+                    response_text = response.content.decode('utf-8', errors='ignore')
+        
+        # 检查响应状态和内容
+        if response.status_code != 200:
+            return False
+            
+        # 检查是否包含有效内容（credit或其他标识）
+        return "credit" in response_text or "balance" in response_text or "amount" in response_text
+        
     except Exception as e:
         print(f"检查Cookie有效性时出错: {e}")
         return False
@@ -278,16 +321,16 @@ def auto_login_with_captcha(site_config, username, password):
 
 def get_valid_cookie(site_config, username, password, account_index=None):
     """获取有效的Cookie，如果失效则自动登录"""
-    # 首先尝试从环境变量获取Cookie
-    cookie_str = os.getenv(site_config["cookie_var"], "")
+    # 首先尝试从文件读取（按账号索引读取）
+    cookie_str = load_cookies_from_file(site_config["name"].lower(), account_index)
     
-    # 如果环境变量没有，尝试从文件读取（按账号索引读取）
+    # 如果文件没有，尝试从环境变量获取Cookie
     if not cookie_str:
-        cookie_str = load_cookies_from_file(site_config["name"].lower(), account_index)
+        cookie_str = os.getenv(site_config["cookie_var"], "")
     
     # 检查Cookie是否有效
     if cookie_str and check_cookie_validity(site_config, cookie_str):
-        print(f"{site_config['name']} 账号{account_index if account_index else ''} Cookie有效")
+        print(f"{site_config['name']} 账号{account_index if account_index else ''} Cookie有效，直接使用")
         return cookie_str
     
     # Cookie失效，尝试自动登录
