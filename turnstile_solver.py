@@ -26,7 +26,7 @@ class TurnstileSolver:
         初始化 Turnstile 验证码解决器
         
         参数:
-            api_base_url: API 基础 URL
+            api_base_url: API 基础 URL (例如: http://服务器IP:3000)
             client_key: API 客户端密钥
             max_retries: 最大重试次数
             retry_interval: 重试间隔(秒)
@@ -38,6 +38,61 @@ class TurnstileSolver:
         self.max_retries = max_retries
         self.retry_interval = retry_interval
         self.timeout = timeout
+    
+    def health_check(self):
+        """检查CloudFreed服务是否可用"""
+        try:
+            base_url = self.create_task_url.replace('/createTask', '')
+            
+            # 首先尝试简单的连接测试
+            try:
+                # 测试根路径
+                response = requests.get(base_url, timeout=5)
+                if response.status_code == 200:
+                    return True
+            except:
+                pass
+            
+            # 尝试测试createTask端点
+            test_payload = {
+                "clientKey": self.client_key,
+                "type": "Turnstile",
+                "url": "https://example.com",
+                "siteKey": "1x00000000000000000000AA"
+            }
+            
+            response = requests.post(
+                f"{base_url}/createTask",
+                json=test_payload,
+                timeout=10
+            )
+            
+            # CloudFreed服务可能返回各种状态码，只要不是连接错误就认为服务可用
+            # 常见的响应：200（成功）、400（参数错误）、405（方法错误）等
+            if response.status_code in [200, 400, 405]:
+                # 检查响应内容，如果是参数错误说明服务正常
+                if response.status_code == 400:
+                    response_data = response.json()
+                    if response_data.get('errorCode') == 'ERROR_KEY_DOES_NOT_EXIST':
+                        print("CloudFreed 服务可用，但API密钥无效")
+                        return True
+                    elif response_data.get('errorCode') == 'ERROR_INVALID_TASK_DATA':
+                        print("CloudFreed 服务可用，但任务数据无效")
+                        return True
+                return True
+            else:
+                print(f"CloudFreed 服务返回状态码: {response.status_code}")
+                return False
+                
+        except requests.exceptions.ConnectionError:
+            print("无法连接到 CloudFreed 服务，请检查：")
+            print("1. 服务是否正常运行（docker ps | grep cloudflyer）")
+            print("2. 服务地址是否正确（CLOUDFREED_BASE_URL 环境变量）")
+            print("3. 网络连接是否正常")
+            return False
+        except Exception as e:
+            print(f"CloudFreed 服务健康检查失败: {e}")
+            return False
     
     def solve(
         self,
