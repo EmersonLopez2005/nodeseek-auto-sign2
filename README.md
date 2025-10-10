@@ -7,6 +7,11 @@
 
 > 🚀 支持 NodeSeek 和 DeepFlood 两个论坛的多账户自动签到脚本，支持Cookie失效自动登录，专为青龙面板优化
 
+## 📦 相关仓库
+
+- **账号密码登录版**：https://github.com/EmersonLopez2005/nodeseek-auto-sign2
+- **Cookie登录版**：https://github.com/EmersonLopez2005/nodeseek-auto-sign
+
 ## 📦 依赖安装
 
 在运行脚本前，需要安装必要的依赖包：
@@ -38,6 +43,10 @@ pip install -r requirements.txt
 
 #### 拉取仓库
 ```bash
+# 账号密码登录版（推荐）
+ql repo https://github.com/EmersonLopez2005/nodeseek-auto-sign2.git
+
+# 或 Cookie登录版
 ql repo https://github.com/EmersonLopez2005/nodeseek-auto-sign.git
 ```
 
@@ -58,10 +67,6 @@ NS_USER=你的NodeSeek账号1&你的NodeSeek账号2
 NS_PASS=你的NodeSeek密码1&你的NodeSeek密码2
 DF_USER=你的DeepFlood账号1&你的DeepFlood账号2  
 DF_PASS=你的DeepFlood密码1&你的DeepFlood密码2
-
-# 可选配置（自定义用户名显示）
-NS_USERNAMES=张三&李四&王五
-DF_USERNAMES=用户A&用户B&用户C
 
 # CloudFreed验证码服务配置
 CLOUDFREED_API_KEY=你的CloudFreed客户端密钥
@@ -133,8 +138,7 @@ curl http://localhost:3000/health
 | `DF_COOKIE` | ✅ | DeepFlood站点Cookie，多个用&分隔 | `cookie1&cookie2` |
 | `TG_BOT_TOKEN` | ✅ | Telegram机器人Token | `1234567890:ABC...` |
 | `TG_USER_ID` | ✅ | Telegram用户ID | `123456789` |
-| `NS_USERNAMES` | ❌ | NodeSeek自定义用户名，多个用&分隔 | `张三&李四&王五` |
-| `DF_USERNAMES` | ❌ | DeepFlood自定义用户名，多个用&分隔 | `用户A&用户B` |
+
 | `NS_USER` | ❌ | NodeSeek账号，多个用&分隔 | `user1&user2` |
 | `NS_PASS` | ❌ | NodeSeek密码，多个用&分隔 | `pass1&pass2` |
 | `DF_USER` | ❌ | DeepFlood账号，多个用&分隔 | `user1&user2` |
@@ -156,20 +160,7 @@ NS_USERNAMES=张三&李四&王五
 #       cookie3→王五
 ```
 
-#### 2. 支持多种分隔符
-```bash
-NS_USERNAMES=张三&李四&王五    # & 分隔（推荐）
-NS_USERNAMES=张三|李四|王五    # | 分隔
-NS_USERNAMES=张三,李四,王五    # , 分隔
-NS_USERNAMES=张三;李四;王五    # ; 分隔
-```
 
-#### 3. 部分配置
-```bash
-NS_COOKIE=cookie1&cookie2&cookie3&cookie4
-NS_USERNAMES=张三&李四
-# 结果显示：张三、李四、账号3、账号4
-```
 
 ## 📱 通知效果
 
@@ -237,7 +228,7 @@ nodeseek-auto-sign/
 ## 🔍 常见问题
 
 ### Q: 支持账号密码登录吗？
-A: 是的！现在支持Cookie失效时的自动账号密码登录，集成了CloudFreed验证码解决服务。
+A: 是的！现在支持Cookie失效时的自动账号密码登录，集成了CloudFreed验证码解决服务。推荐使用账号密码登录版仓库：https://github.com/EmersonLopez2005/nodeseek-auto-sign2
 
 ### Q: 如何配置CloudFreed服务？
 A: 需要部署CloudFreed自建服务，具体命令参考部署说明。服务运行后配置CLOUDFREED_API_KEY环境变量即可。
