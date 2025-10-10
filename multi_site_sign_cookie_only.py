@@ -506,8 +506,16 @@ def process_site(site_name, site_config, ns_random):
         cookie_list = all_cookies.split("&")
         cookie_list = [c.strip() for c in cookie_list if c.strip()]
     
+    # 智能匹配：只处理有用户名密码配置的账号
+    valid_cookie_list = []
+    for i, cookie in enumerate(cookie_list):
+        if i < len(custom_usernames) and i < len(passwords):
+            valid_cookie_list.append(cookie)
+        else:
+            print(f"忽略账号{i+1}：缺少用户名或密码配置")
+    
     # 如果没有Cookie但有用户名密码，尝试自动登录
-    if not cookie_list and custom_usernames and passwords:
+    if not valid_cookie_list and custom_usernames and passwords:
         print("未找到Cookie配置，但检测到用户名密码配置，尝试自动登录...")
         # 确保用户名和密码数量匹配
         min_accounts = min(len(custom_usernames), len(passwords))
@@ -517,15 +525,15 @@ def process_site(site_name, site_config, ns_random):
             print(f"尝试为 {username} 自动登录...")
             new_cookie = get_valid_cookie(site_config, username, password)
             if new_cookie:
-                cookie_list.append(new_cookie)
+                valid_cookie_list.append(new_cookie)
     
-    print(f"共发现 {len(cookie_list)} 个Cookie")
+    print(f"共发现 {len(cookie_list)} 个Cookie，有效配置 {len(valid_cookie_list)} 个账号")
     if custom_usernames:
         print(f"发现 {len(custom_usernames)} 个自定义用户名: {custom_usernames}")
     
     site_results = []
     
-    for i, cookie in enumerate(cookie_list):
+    for i, cookie in enumerate(valid_cookie_list):
         account_index = i + 1
         
         # 确定显示名称：优先使用自定义用户名，否则使用默认名称
