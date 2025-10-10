@@ -227,13 +227,18 @@ def auto_login_with_captcha(site_config, username, password):
         login_data = {
             "username": username,
             "password": password,
-            "cf-turnstile-response": token
+            "token": token,
+            "source": "turnstile"
         }
+        
+        # 添加JSON请求头
+        login_headers = headers.copy()
+        login_headers["Content-Type"] = "application/json"
         
         login_response = session.post(
             site_config["login_api"],
-            data=login_data,
-            headers=headers
+            json=login_data,
+            headers=login_headers
         )
         
         if login_response.status_code == 200:
