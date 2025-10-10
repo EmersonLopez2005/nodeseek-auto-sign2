@@ -278,7 +278,7 @@ A: 通常是Cookie失效导致，重新获取Cookie即可。也可能是网络�
 
 ## ⭐ Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=EmersonLopez2005/nodeseek-auto-sign&type=Date)](https://star-history.com/#EmersonLopez2005/nodeseek-auto-sign2&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=EmersonLopez2005/nodeseek-auto-sign2&type=Date)](https://star-history.com/#EmersonLopez2005/nodeseek-auto-sign2&Date)
 
 ## 🙏 致谢
 
