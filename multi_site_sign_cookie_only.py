@@ -163,8 +163,7 @@ def check_cookie_validity(site_config, cookie_str):
         # 尝试访问用户信息页面
         response = requests.get(
             f"{site_config['stats_api']}1",
-            headers=headers,
-            impersonate="chrome110"
+            headers=headers
         )
         
         return response.status_code == 200 and "credit" in response.text
