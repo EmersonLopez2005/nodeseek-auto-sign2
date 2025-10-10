@@ -58,19 +58,13 @@ ql repo https://github.com/EmersonLopez2005/nodeseek-auto-sign.git
 TG_BOT_TOKEN=你的Telegram机器人Token
 TG_USER_ID=你的Telegram用户ID
 
-# Cookie登录方式（推荐）
-NS_COOKIE=你的NodeSeek_Cookie1&你的NodeSeek_Cookie2
-DF_COOKIE=你的DeepFlood_Cookie1&你的DeepFlood_Cookie2
+# 账号密码配置（格式：用户名1&密码1&用户名2&密码2）
+NS_COOKIE=你的NodeSeek用户名1&你的NodeSeek密码1&你的NodeSeek用户名2&你的NodeSeek密码2
+DF_COOKIE=你的DeepFlood用户名1&你的DeepFlood密码1&你的DeepFlood用户名2&你的DeepFlood密码2
 
-# 账号密码自动登录方式（Cookie失效时使用）
-NS_USER=你的NodeSeek账号1&你的NodeSeek账号2
-NS_PASS=你的NodeSeek密码1&你的NodeSeek密码2
-DF_USER=你的DeepFlood账号1&你的DeepFlood账号2  
-DF_PASS=你的DeepFlood密码1&你的DeepFlood密码2
-
-# CloudFreed验证码服务配置
+# CloudFreed验证码服务配置（必须配置）
 CLOUDFREED_API_KEY=你的CloudFreed客户端密钥
-CLOUDFREED_BASE_URL=http://localhost:3000
+CLOUDFREED_BASE_URL=http://您的服务器IP:3000
 ```
 
 #### 添加定时任务
@@ -134,31 +128,32 @@ curl http://localhost:3000/health
 
 | 变量名 | 必需 | 说明 | 示例 |
 |--------|------|------|------|
-| `NS_COOKIE` | ✅ | NodeSeek站点Cookie，多个用&分隔 | `cookie1&cookie2` |
-| `DF_COOKIE` | ✅ | DeepFlood站点Cookie，多个用&分隔 | `cookie1&cookie2` |
 | `TG_BOT_TOKEN` | ✅ | Telegram机器人Token | `1234567890:ABC...` |
 | `TG_USER_ID` | ✅ | Telegram用户ID | `123456789` |
-
-| `NS_USER` | ❌ | NodeSeek账号，多个用&分隔 | `user1&user2` |
-| `NS_PASS` | ❌ | NodeSeek密码，多个用&分隔 | `pass1&pass2` |
-| `DF_USER` | ❌ | DeepFlood账号，多个用&分隔 | `user1&user2` |
-| `DF_PASS` | ❌ | DeepFlood密码，多个用&分隔 | `pass1&pass2` |
-| `CLOUDFREED_API_KEY` | ❌ | CloudFreed服务API密钥 | `your-api-key` |
-| `CLOUDFREED_BASE_URL` | ❌ | CloudFreed服务地址，默认localhost:3000 | `http://localhost:3000` |
+| `NS_COOKIE` | ✅ | NodeSeek账号密码（格式：用户名1&密码1&用户名2&密码2） | `user1&pass1&user2&pass2` |
+| `DF_COOKIE` | ✅ | DeepFlood账号密码（格式：用户名1&密码1&用户名2&密码2） | `user1&pass1&user2&pass2` |
+| `CLOUDFREED_API_KEY` | ✅ | CloudFreed服务API密钥 | `your-api-key` |
+| `CLOUDFREED_BASE_URL` | ✅ | CloudFreed服务地址 | `http://您的服务器IP:3000` |
 | `NS_RANDOM` | ❌ | 随机参数，默认true | `true` |
 
-### 用户名配置规则
+### 账号密码配置规则
 
-#### 1. 顺序对应
-用户名必须与Cookie顺序一一对应：
+#### 1. 格式说明
+账号密码采用"用户名&密码"格式，多账号用&分隔：
 ```bash
-NS_COOKIE=cookie1&cookie2&cookie3
-NS_USERNAMES=张三&李四&王五
-#          ↑    ↑    ↑
-#       cookie1→张三
-#       cookie2→李四  
-#       cookie3→王五
+# 单账号
+NS_COOKIE=用户名&密码
+
+# 多账号
+NS_COOKIE=用户名1&密码1&用户名2&密码2&用户名3&密码3
 ```
+
+#### 2. 自动登录流程
+1. 脚本从NS_COOKIE/DF_COOKIE解析用户名和密码
+2. 检查每个账号的Cookie是否有效
+3. 如果Cookie失效，自动使用账号密码登录并获取新Cookie
+4. 每个账号的Cookie独立保存到单独的文件中
+5. 下次运行时直接使用保存的Cookie，直到再次失效
 
 
 
@@ -228,13 +223,13 @@ nodeseek-auto-sign/
 ## 🔍 常见问题
 
 ### Q: 支持账号密码登录吗？
-A: 是的！现在支持Cookie失效时的自动账号密码登录，集成了CloudFreed验证码解决服务。推荐使用账号密码登录版仓库：https://github.com/EmersonLopez2005/nodeseek-auto-sign2
+A: 是的！现在完全采用账号密码登录方式，支持Cookie失效时的自动登录，集成了CloudFreed验证码解决服务。每个账号的Cookie会独立保存，下次运行直接使用。
 
 ### Q: 如何配置CloudFreed服务？
 A: 需要部署CloudFreed自建服务，具体命令参考部署说明。服务运行后配置CLOUDFREED_API_KEY环境变量即可。
 
 ### Q: Cookie失效后会自动更新吗？
-A: 是的！当检测到Cookie失效时，脚本会自动使用配置的账号密码登录，并更新Cookie。
+A: 是的！当检测到Cookie失效时，脚本会自动使用配置的账号密码登录，并更新Cookie。每个账号的Cookie会独立保存到单独的文件中。
 
 ### Q: Cookie多久需要更新？
 A: 通常Cookie有效期为1-3个月，失效后需要重新获取。脚本会自动检测Cookie失效并在通知中提醒。
