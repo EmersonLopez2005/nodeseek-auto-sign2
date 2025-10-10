@@ -123,26 +123,28 @@ def detect_environment():
         return "unknown"
 
 # ---------------- Cookie 文件操作 ----------------
-def get_cookie_file_path(site_name):
+def get_cookie_file_path(site_name, account_index=None):
+    if account_index is not None:
+        return f"./cookie/{site_name.upper()}_COOKIE_{account_index}.txt"
     return f"./cookie/{site_name.upper()}_COOKIE.txt"
 
-def load_cookies_from_file(site_name):
+def load_cookies_from_file(site_name, account_index=None):
     """从文件加载Cookie"""
     try:
-        cookie_file = get_cookie_file_path(site_name)
+        cookie_file = get_cookie_file_path(site_name, account_index)
         if os.path.exists(cookie_file):
-            with open(cookie_file, "r") as f:
+            with open(cookie_file, "r", encoding='utf-8') as f:
                 return f.read().strip()
     except Exception as e:
         print(f"从文件读取Cookie失败: {e}")
     return ""
 
-def save_cookie_to_file(site_name, cookie_str):
+def save_cookie_to_file(site_name, cookie_str, account_index=None):
     """将Cookie保存到文件"""
     try:
-        cookie_file = get_cookie_file_path(site_name)
+        cookie_file = get_cookie_file_path(site_name, account_index)
         os.makedirs(os.path.dirname(cookie_file), exist_ok=True)
-        with open(cookie_file, "w") as f:
+        with open(cookie_file, "w", encoding='utf-8') as f:
             f.write(cookie_str)
         print(f"Cookie 已成功保存到文件: {cookie_file}")
         return True
@@ -276,22 +278,22 @@ def auto_login_with_captcha(site_config, username, password):
         print(f"自动登录过程中出错: {e}")
         return None
 
-def get_valid_cookie(site_config, username, password):
+def get_valid_cookie(site_config, username, password, account_index=None):
     """获取有效的Cookie，如果失效则自动登录"""
     # 首先尝试从环境变量获取Cookie
     cookie_str = os.getenv(site_config["cookie_var"], "")
     
-    # 如果环境变量没有，尝试从文件读取
+    # 如果环境变量没有，尝试从文件读取（按账号索引读取）
     if not cookie_str:
-        cookie_str = load_cookies_from_file(site_config["name"].lower())
+        cookie_str = load_cookies_from_file(site_config["name"].lower(), account_index)
     
     # 检查Cookie是否有效
     if cookie_str and check_cookie_validity(site_config, cookie_str):
-        print(f"{site_config['name']} Cookie有效")
+        print(f"{site_config['name']} 账号{account_index if account_index else ''} Cookie有效")
         return cookie_str
     
     # Cookie失效，尝试自动登录
-    print(f"{site_config['name']} Cookie已失效，尝试自动登录...")
+    print(f"{site_config['name']} 账号{account_index if account_index else ''} Cookie已失效，尝试自动登录...")
     
     if not username or not password:
         print("用户名或密码未配置，无法自动登录")
@@ -300,8 +302,8 @@ def get_valid_cookie(site_config, username, password):
     new_cookie = auto_login_with_captcha(site_config, username, password)
     
     if new_cookie:
-        # 保存新Cookie到文件
-        save_cookie_to_file(site_config["name"].lower(), new_cookie)
+        # 保存新Cookie到文件（按账号索引保存）
+        save_cookie_to_file(site_config["name"].lower(), new_cookie, account_index)
         return new_cookie
     else:
         print("自动登录失败")
@@ -523,7 +525,7 @@ def process_site(site_name, site_config, ns_random):
             username = custom_usernames[i]
             password = passwords[i]
             print(f"尝试为 {username} 自动登录...")
-            new_cookie = get_valid_cookie(site_config, username, password)
+            new_cookie = get_valid_cookie(site_config, username, password, i+1)
             if new_cookie:
                 valid_cookie_list.append(new_cookie)
     
@@ -550,7 +552,7 @@ def process_site(site_name, site_config, ns_random):
             if i < len(custom_usernames) and i < len(passwords):
                 username = custom_usernames[i]
                 password = passwords[i]
-                new_cookie = get_valid_cookie(site_config, username, password)
+                new_cookie = get_valid_cookie(site_config, username, password, i+1)
                 if new_cookie:
                     cookie = new_cookie
                     print(f"自动登录成功，使用新Cookie")
