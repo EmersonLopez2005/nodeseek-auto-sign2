@@ -188,6 +188,10 @@ def auto_login_with_captcha(site_config, username, password):
             client_key=cloudfreed_api_key
         )
         
+        # 检查服务可用性（不强制要求，即使服务不可用也尝试继续）
+        if not solver.health_check():
+            print("警告：CloudFreed 服务可能不可用，但将继续尝试自动登录")
+        
         # 获取登录页面
         session = requests.Session()
         headers = {
