@@ -7,6 +7,18 @@
 
 > 🚀 支持 NodeSeek 和 DeepFlood 两个论坛的多账户自动签到脚本，支持Cookie失效自动登录，专为青龙面板优化
 
+## 📦 依赖安装
+
+在运行脚本前，需要安装必要的依赖包：
+
+```bash
+pip install -r requirements.txt
+```
+
+依赖包包括：
+- `requests>=2.25.0` - HTTP请求库
+- `curl-cffi>=0.5.0` - 高性能HTTP客户端（可选，已兼容标准requests）
+
 ## ✨ 特性
 
 - 🎯 **双站点支持** - 同时支持 NodeSeek 和 DeepFlood 论坛

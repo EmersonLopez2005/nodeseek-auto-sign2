@@ -1,4 +1,4 @@
-from curl_cffi import requests
+import requests
 import time
 import os
 from typing import Dict, Optional, Any, Union
