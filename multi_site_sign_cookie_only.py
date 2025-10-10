@@ -15,6 +15,14 @@ try:
 except ImportError:
     print("警告：验证码解决器模块未找到，自动登录功能将不可用")
 
+# 加载环境变量
+from dotenv import load_dotenv
+load_dotenv()  # 加载默认.env文件
+
+# 禁用SSL证书验证警告
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 # ---------------- 通知模块动态加载 ----------------
 hadsend = False
 send = None
@@ -180,7 +188,9 @@ def check_cookie_validity(site_config, cookie_str):
         # 尝试访问用户信息页面
         response = requests.get(
             f"{site_config['stats_api']}1",
-            headers=headers
+            headers=headers,
+            verify=False,
+            timeout=10
         )
         
         # 正确处理响应编码，特别是中文字符
@@ -207,8 +217,33 @@ def check_cookie_validity(site_config, cookie_str):
         if response.status_code != 200:
             return False
             
-        # 检查是否包含有效内容（credit或其他标识）
-        return "credit" in response_text or "balance" in response_text or "amount" in response_text
+        # 更宽松的Cookie有效性检查
+        # 只要返回200状态码且不是明显的错误页面，就认为Cookie有效
+        if response.status_code == 200:
+            # 检查是否是有效的JSON响应
+            try:
+                data = response.json()
+                if data.get("success") is not None:
+                    return True
+            except:
+                pass
+            
+            # 检查是否包含有效内容标识
+            valid_indicators = ["credit", "balance", "amount", "success", "data", "message"]
+            for indicator in valid_indicators:
+                if indicator in response_text.lower():
+                    return True
+            
+            # 如果包含常见的错误标识，则返回False
+            error_indicators = ["error", "invalid", "unauthorized", "forbidden", "login", "signin"]
+            for indicator in error_indicators:
+                if indicator in response_text.lower():
+                    return False
+            
+            # 默认认为有效（避免过于严格的检查导致频繁重新登录）
+            return True
+            
+        return False
         
     except Exception as e:
         print(f"检查Cookie有效性时出错: {e}")
@@ -223,6 +258,10 @@ def auto_login_with_captcha(site_config, username, password):
         
         if not cloudfreed_api_key:
             print("错误：未配置 CLOUDFREED_API_KEY 环境变量")
+            print("请按照以下步骤配置：")
+            print("1. 部署CloudFreed服务：docker run -itd --name cloudflyer -p 3000:3000 --restart unless-stopped jackzzs/cloudflyer -K 你的客户端密钥 -H 0.0.0.0")
+            print("2. 设置环境变量 CLOUDFREED_API_KEY=你的客户端密钥")
+            print("3. 如果服务不在本地，设置 CLOUDFREED_BASE_URL=http://服务IP:3000")
             return None
             
         # 初始化验证码解决器
@@ -231,9 +270,19 @@ def auto_login_with_captcha(site_config, username, password):
             client_key=cloudfreed_api_key
         )
         
-        # 检查服务可用性（不强制要求，即使服务不可用也尝试继续）
-        if not solver.health_check():
-            print("警告：CloudFreed 服务可能不可用，但将继续尝试自动登录")
+        # 检查服务可用性
+        try:
+            if not solver.health_check():
+                print("警告：CloudFreed 服务不可用，自动登录功能将无法使用")
+                print("请检查：")
+                print("1. CloudFreed服务是否正常运行")
+                print("2. 服务地址是否正确（CLOUDFREED_BASE_URL环境变量）")
+                print("3. 网络连接是否正常")
+                return None
+        except Exception as e:
+            print(f"CloudFreed 服务检查失败: {e}")
+            print("错误：CloudFreed 服务不可用，自动登录功能将无法使用")
+            return None
         
         # 为每个登录尝试创建新的独立会话
         session = requests.Session()
@@ -246,7 +295,9 @@ def auto_login_with_captcha(site_config, username, password):
         # 获取登录页面内容
         login_page_response = session.get(
             site_config["login_url"],
-            headers=headers
+            headers=headers,
+            verify=False,
+            timeout=10
         )
         
         if login_page_response.status_code != 200:
@@ -281,7 +332,9 @@ def auto_login_with_captcha(site_config, username, password):
         login_response = session.post(
             site_config["login_api"],
             json=login_data,
-            headers=login_headers
+            headers=login_headers,
+            verify=False,
+            timeout=10
         )
         
         if login_response.status_code == 200:
@@ -529,36 +582,34 @@ def process_site(site_name, site_config, ns_random):
     cookie_str = os.getenv(site_config["cookie_var"], "")
     custom_usernames, passwords = parse_accounts_from_cookie(cookie_str)
     
-    # 读取Cookie
-    all_cookies = ""
-    if env_type == "docker":
-        cookie_file = get_cookie_file_path(site_name)
-        print(f"Docker环境，尝试从 {cookie_file} 读取Cookie...")
-        all_cookies = load_cookies_from_file(site_name)
-        if all_cookies:
-            print("成功从文件加载Cookie。")
-        else:
-            print("Cookie文件不存在或为空。")
-    else:
-        all_cookies = os.getenv(site_config["cookie_var"], "")
-        print(f"从环境变量 {site_config['cookie_var']} 读取Cookie")
-    
-    # 处理Cookie列表
-    cookie_list = []
-    if all_cookies:
-        cookie_list = all_cookies.split("&")
-        cookie_list = [c.strip() for c in cookie_list if c.strip()]
-    
-    # 智能匹配：只处理有用户名密码配置的账号
+    # 优先从文件读取Cookie，如果文件不存在则使用环境变量
     valid_cookie_list = []
-    for i, cookie in enumerate(cookie_list):
-        if i < len(custom_usernames) and i < len(passwords):
-            valid_cookie_list.append(cookie)
-        else:
-            print(f"忽略账号{i+1}：缺少用户名或密码配置")
     
-    # 如果没有Cookie但有用户名密码，尝试自动登录
-    if not valid_cookie_list and custom_usernames and passwords:
+    # 检查每个账号的Cookie文件
+    for i in range(len(custom_usernames)):
+        if i < len(passwords):
+            account_index = i + 1
+            # 尝试从文件读取Cookie
+            file_cookie = load_cookies_from_file(site_name, account_index)
+            if file_cookie:
+                print(f"账号{account_index} 从文件加载Cookie成功")
+                valid_cookie_list.append(file_cookie)
+            else:
+                # 如果文件没有Cookie，尝试从环境变量获取
+                if i < len(cookie_str.split("&")) // 2:
+                    cookie_parts = cookie_str.split("&")
+                    if len(cookie_parts) > i * 2:
+                        env_cookie = cookie_parts[i * 2].strip()
+                        if env_cookie:
+                            valid_cookie_list.append(env_cookie)
+                            print(f"账号{account_index} 从环境变量加载Cookie")
+                        else:
+                            valid_cookie_list.append("")  # 占位，后续自动登录
+                else:
+                    valid_cookie_list.append("")  # 占位，后续自动登录
+    
+    # 如果没有找到任何Cookie但有用户名密码，尝试自动登录
+    if not any(valid_cookie_list) and custom_usernames and passwords:
         print("未找到Cookie配置，但检测到用户名密码配置，尝试自动登录...")
         # 确保用户名和密码数量匹配
         min_accounts = min(len(custom_usernames), len(passwords))
@@ -568,11 +619,11 @@ def process_site(site_name, site_config, ns_random):
             print(f"尝试为 {username} 自动登录...")
             new_cookie = get_valid_cookie(site_config, username, password, i+1)
             if new_cookie:
-                valid_cookie_list.append(new_cookie)
+                valid_cookie_list[i] = new_cookie
     
-    print(f"共发现 {len(cookie_list)} 个Cookie，有效配置 {len(valid_cookie_list)} 个账号")
+    print(f"共配置 {len(custom_usernames)} 个账号，有效Cookie {len([c for c in valid_cookie_list if c])} 个")
     if custom_usernames:
-        print(f"发现 {len(custom_usernames)} 个自定义用户名: {custom_usernames}")
+        print(f"自定义用户名: {custom_usernames}")
     
     site_results = []
     
@@ -587,9 +638,16 @@ def process_site(site_name, site_config, ns_random):
             display_user = f"账号{account_index}"
             print(f"\n==== {site_config['name']} {display_user} 开始签到 ====")
         
+        # 如果cookie为空，尝试从文件读取
+        if not cookie:
+            file_cookie = load_cookies_from_file(site_name, account_index)
+            if file_cookie:
+                cookie = file_cookie
+                print(f"从文件加载Cookie成功")
+        
         # 检查Cookie是否有效，如果失效则尝试自动登录
-        if not check_cookie_validity(site_config, cookie):
-            print(f"{display_user} Cookie已失效，尝试自动登录...")
+        if not cookie or not check_cookie_validity(site_config, cookie):
+            print(f"{display_user} Cookie无效或失效，尝试自动登录...")
             if i < len(custom_usernames) and i < len(passwords):
                 username = custom_usernames[i]
                 password = passwords[i]
