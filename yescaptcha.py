@@ -114,7 +114,6 @@ class YesCaptchaSolver:
                 self.create_task_url, 
                 json=data,
                 timeout=self.timeout,
-                impersonate="chrome110"
             )
             result = response.json()
                 
@@ -151,7 +150,6 @@ class YesCaptchaSolver:
                     self.get_result_url,
                     json=data,
                     timeout=self.timeout,
-                    impersonate="chrome110"
                 )
                 result = response.json()
                 

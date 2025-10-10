@@ -200,8 +200,7 @@ def auto_login_with_captcha(site_config, username, password):
         # 获取登录页面内容
         login_page_response = session.get(
             site_config["login_url"],
-            headers=headers,
-            impersonate="chrome110"
+            headers=headers
         )
         
         if login_page_response.status_code != 200:
@@ -231,8 +230,7 @@ def auto_login_with_captcha(site_config, username, password):
         login_response = session.post(
             site_config["login_api"],
             data=login_data,
-            headers=headers,
-            impersonate="chrome110"
+            headers=headers
         )
         
         if login_response.status_code == 200:
@@ -300,7 +298,7 @@ def sign(cookie, site_config, ns_random):
     }
     try:
         url = f"{site_config['sign_api']}?random={ns_random}"
-        response = requests.post(url, headers=headers, impersonate="chrome110")
+        response = requests.post(url, headers=headers)
         data = response.json()
         msg = data.get("message", "")
         if "鸡腿" in msg or data.get("success"):
@@ -339,7 +337,7 @@ def get_signin_stats(cookie, site_config, days=30):
         
         while page <= 20:
             url = f"{site_config['stats_api']}{page}"
-            response = requests.get(url, headers=headers, impersonate="chrome110")
+            response = requests.get(url, headers=headers)
             data = response.json()
             
             if not data.get("success") or not data.get("data"):
