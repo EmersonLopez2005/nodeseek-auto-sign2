@@ -192,7 +192,7 @@ def auto_login_with_captcha(site_config, username, password):
         if not solver.health_check():
             print("警告：CloudFreed 服务可能不可用，但将继续尝试自动登录")
         
-        # 获取登录页面
+        # 为每个登录尝试创建新的独立会话
         session = requests.Session()
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -265,6 +265,11 @@ def auto_login_with_captcha(site_config, username, password):
                 return cookie_str
         else:
             print(f"登录请求失败: {login_response.status_code}")
+            try:
+                error_data = login_response.json()
+                print(f"登录错误信息: {error_data}")
+            except:
+                print(f"登录响应内容: {login_response.text[:200]}")
             return None
             
     except Exception as e:
