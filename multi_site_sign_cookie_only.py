@@ -246,13 +246,23 @@ def auto_login_with_captcha(site_config, username, password):
             cookies = session.cookies
             cookie_str = "; ".join([f"{name}={value}" for name, value in cookies.items()])
             
+            # 打印登录响应和Cookie信息用于调试
+            print(f"登录响应状态码: {login_response.status_code}")
+            try:
+                login_data = login_response.json()
+                print(f"登录响应数据: {login_data}")
+            except:
+                print(f"登录响应内容: {login_response.text[:200]}")
+            print(f"获取到的Cookie: {cookie_str}")
+            
             # 验证登录是否成功
             if check_cookie_validity(site_config, cookie_str):
                 print(f"自动登录成功，已获取新Cookie")
                 return cookie_str
             else:
-                print("登录成功但Cookie验证失败")
-                return None
+                print("登录成功但Cookie验证失败，尝试直接使用Cookie")
+                # 即使验证失败，也返回Cookie尝试使用
+                return cookie_str
         else:
             print(f"登录请求失败: {login_response.status_code}")
             return None
