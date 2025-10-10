@@ -53,6 +53,7 @@ DF_USERNAMES=用户A&用户B&用户C
 
 # CloudFreed验证码服务配置
 CLOUDFREED_API_KEY=你的CloudFreed客户端密钥
+CLOUDFREED_BASE_URL=http://localhost:3000
 ```
 
 #### 添加定时任务
@@ -127,6 +128,7 @@ curl http://localhost:3000/health
 | `DF_USER` | ❌ | DeepFlood账号，多个用&分隔 | `user1&user2` |
 | `DF_PASS` | ❌ | DeepFlood密码，多个用&分隔 | `pass1&pass2` |
 | `CLOUDFREED_API_KEY` | ❌ | CloudFreed服务API密钥 | `your-api-key` |
+| `CLOUDFREED_BASE_URL` | ❌ | CloudFreed服务地址，默认localhost:3000 | `http://localhost:3000` |
 | `NS_RANDOM` | ❌ | 随机参数，默认true | `true` |
 
 ### 用户名配置规则
@@ -239,6 +241,19 @@ A: 可以，只配置对应站点的Cookie即可。未配置的站点会自动�
 
 ### Q: 通知发送失败怎么办？
 A: 检查 `TG_BOT_TOKEN` 和 `TG_USER_ID` 是否正确，确保机器人已启动对话。
+
+### Q: CloudFreed可以正常调用吗？
+A: 需要确保：
+1. CloudFreed服务已正确部署并运行
+2. `CLOUDFREED_API_KEY` 和 `CLOUDFREED_BASE_URL` 环境变量已正确配置
+3. 服务地址可访问（默认 http://localhost:3000）
+
+### Q: 忘记CloudFreed密钥怎么办？
+A: 如果忘记了客户端密钥：
+1. 查看容器日志获取密钥：`docker logs cloudflyer`
+2. 日志中会显示生成的客户端密钥
+3. 重新配置环境变量 `CLOUDFREED_API_KEY`
+4. 确保 `CLOUDFREED_BASE_URL` 指向正确的服务地址
 
 ### Q: 签到失败怎么办？
 A: 通常是Cookie失效导致，重新获取Cookie即可。也可能是网络问题，脚本会自动重试。
