@@ -175,8 +175,19 @@ def check_cookie_validity(site_config, cookie_str):
 def auto_login_with_captcha(site_config, username, password):
     """自动登录并解决验证码"""
     try:
+        # 获取CloudFreed配置
+        cloudfreed_api_key = os.getenv("CLOUDFREED_API_KEY", "")
+        cloudfreed_base_url = os.getenv("CLOUDFREED_BASE_URL", "http://localhost:3000")
+        
+        if not cloudfreed_api_key:
+            print("错误：未配置 CLOUDFREED_API_KEY 环境变量")
+            return None
+            
         # 初始化验证码解决器
-        solver = TurnstileSolver()
+        solver = TurnstileSolver(
+            api_base_url=cloudfreed_base_url,
+            client_key=cloudfreed_api_key
+        )
         
         # 获取登录页面
         session = requests.Session()
@@ -199,10 +210,11 @@ def auto_login_with_captcha(site_config, username, password):
         
         # 解决Turnstile验证码
         print("正在解决CloudFlare Turnstile验证码...")
-        token = solver.solve_turnstile(
+        token = solver.solve(
             site_config["login_url"],
             site_config["sitekey"],
-            user_agent=headers["User-Agent"]
+            user_agent=headers["User-Agent"],
+            verbose=True
         )
         
         if not token:
