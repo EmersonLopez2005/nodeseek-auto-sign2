@@ -453,6 +453,26 @@ def parse_usernames(usernames_str):
     usernames = re.split(r'[&|,;]', usernames_str)
     return [name.strip() for name in usernames if name.strip()]
 
+def parse_accounts_from_cookie(cookie_str):
+    """从Cookie字符串解析账号信息"""
+    if not cookie_str:
+        return [], []
+    
+    # 格式：用户名1&密码1&用户名2&密码2
+    parts = cookie_str.split("&")
+    parts = [part.strip() for part in parts if part.strip()]
+    
+    usernames = []
+    passwords = []
+    
+    # 每两个元素为一组：用户名和密码
+    for i in range(0, len(parts), 2):
+        if i + 1 < len(parts):
+            usernames.append(parts[i])
+            passwords.append(parts[i + 1])
+    
+    return usernames, passwords
+
 # ---------------- 处理单个站点 ----------------
 def process_site(site_name, site_config, ns_random):
     """处理单个站点的签到"""
@@ -462,13 +482,9 @@ def process_site(site_name, site_config, ns_random):
     
     env_type = detect_environment()
     
-    # 读取用户名和密码配置
-    usernames_str = os.getenv(site_config["username_var"], "")
-    custom_usernames = parse_usernames(usernames_str)
-    
-    # 读取密码配置
-    passwords_str = os.getenv(site_config["pass_var"], "")
-    passwords = parse_usernames(passwords_str) if passwords_str else []
+    # 从Cookie环境变量解析账号信息
+    cookie_str = os.getenv(site_config["cookie_var"], "")
+    custom_usernames, passwords = parse_accounts_from_cookie(cookie_str)
     
     # 读取Cookie
     all_cookies = ""
