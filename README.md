@@ -7,10 +7,17 @@
 
 > 🚀 支持 NodeSeek 和 DeepFlood 两个论坛的多账户自动签到脚本，支持Cookie失效自动登录，专为青龙面板优化
 
-## 📦 相关仓库
+## 📦 项目组件
 
+本仓库包含以下组件：
+
+### Python 自动签到脚本
 - **账号密码登录版**：https://github.com/EmersonLopez2005/nodeseek-auto-sign2
 - **Cookie登录版**：https://github.com/EmersonLopez2005/nodeseek-auto-sign
+
+### 浏览器用户脚本
+- **MJJBox TL3 按钮** (`mjjbox-tl3-button.user.js`) - 为 mjjbox.com 添加 TL3 要求查看按钮
+  - 详细文档请查看 [USERSCRIPT_README.md](USERSCRIPT_README.md)
 
 ## 📦 依赖安装
 
@@ -218,8 +225,10 @@ nodeseek-auto-sign/
 ├── notify.py                         # 通知模块
 ├── turnstile_solver.py              # CloudFlare验证码解决器
 ├── yescaptcha.py                    # 验证码服务集成
+├── mjjbox-tl3-button.user.js        # MJJBox TL3按钮用户脚本
 ├── requirements.txt                  # 依赖包列表
-├── README.md                        # 使用说明
+├── README.md                        # 主要使用说明
+├── USERSCRIPT_README.md             # 用户脚本使用说明
 └── cookie/                          # Cookie存储目录（Docker用）
     ├── notification_status.json     # 通知状态记录
     ├── NODESEEK_COOKIE.txt          # NodeSeek Cookie文件
