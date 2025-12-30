@@ -3,36 +3,41 @@
 import os
 import time
 import json
+import random
 import re
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
-import requests
 
-# 导入验证码解决器
+# === 核心库加载 ===
 try:
-    from turnstile_solver import TurnstileSolver, TurnstileSolverError
-    from yescaptcha import YesCaptchaSolver, YesCaptchaSolverError
+    from curl_cffi import requests
+    print("成功加载 curl_cffi 模块 (v3)")
 except ImportError:
-    print("警告：验证码解决器模块未找到，自动登录功能将不可用")
+    print("【严重警告】未安装 curl_cffi 模块！")
+    import requests
 
-# 加载环境变量
-from dotenv import load_dotenv
-load_dotenv()  # 加载默认.env文件
+# 验证码解决器
+try:
+    from turnstile_solver import TurnstileSolver
+except ImportError:
+    print("警告：验证码解决器模块未找到")
 
-# 禁用SSL证书验证警告
-import urllib3
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+# 环境变量
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except: pass
 
-# ---------------- 通知模块动态加载 ----------------
+# === 通知模块 ===
 hadsend = False
 send = None
 try:
     from notify import send
     hadsend = True
 except ImportError:
-    print("未加载通知模块，跳过通知功能")
+    print("未加载通知模块")
 
-# ---------------- 站点配置 ----------------
+# === 站点配置 ===
 SITES_CONFIG = {
     "nodeseek": {
         "name": "NodeSeek",
@@ -62,21 +67,18 @@ SITES_CONFIG = {
     }
 }
 
-# ---------------- 通知状态管理 ----------------
+# === 通知状态管理 ===
 NOTIFICATION_FILE = "./cookie/notification_status.json"
 
 def load_notification_status():
-    """加载通知状态"""
     try:
         if os.path.exists(NOTIFICATION_FILE):
             with open(NOTIFICATION_FILE, 'r', encoding='utf-8') as f:
                 return json.load(f)
-    except Exception as e:
-        print(f"加载通知状态失败: {e}")
+    except: pass
     return {}
 
 def save_notification_status(status):
-    """保存通知状态"""
     try:
         os.makedirs(os.path.dirname(NOTIFICATION_FILE), exist_ok=True)
         with open(NOTIFICATION_FILE, 'w', encoding='utf-8') as f:
@@ -88,665 +90,315 @@ def should_send_notification(site_name):
     """检查是否应该发送通知（每天只发送一次）"""
     status = load_notification_status()
     today = datetime.now().strftime('%Y-%m-%d')
-    
     site_status = status.get(site_name, {})
     last_sent = site_status.get('last_sent_date')
-    
     return last_sent != today
 
 def mark_notification_sent(site_name):
     """标记通知已发送"""
     status = load_notification_status()
     today = datetime.now().strftime('%Y-%m-%d')
-    
-    if site_name not in status:
-        status[site_name] = {}
-    
+    if site_name not in status: status[site_name] = {}
     status[site_name]['last_sent_date'] = today
     save_notification_status(status)
 
-# ---------------- 环境检测函数 ----------------
-def detect_environment():
-    """检测当前运行环境"""
-    if os.environ.get("IN_DOCKER") == "true":
-        return "docker"
-        
-    ql_path_markers = ['/ql/data/', '/ql/config/', '/ql/', '/.ql/']
-    in_ql_env = False
-    
-    for path in ql_path_markers:
-        if os.path.exists(path):
-            in_ql_env = True
-            break
-    
-    in_github_env = os.environ.get("GITHUB_ACTIONS") == "true" or (os.environ.get("GH_PAT") and os.environ.get("GITHUB_REPOSITORY"))
-    
-    if in_ql_env:
-        return "qinglong"
-    elif in_github_env:
-        return "github"
-    else:
-        return "unknown"
-
-# ---------------- Cookie 文件操作 ----------------
+# === Cookie 文件操作 ===
 def get_cookie_file_path(site_name, account_index=None):
     if account_index is not None:
         return f"./cookie/{site_name.upper()}_COOKIE_{account_index}.txt"
     return f"./cookie/{site_name.upper()}_COOKIE.txt"
 
 def load_cookies_from_file(site_name, account_index=None):
-    """从文件加载Cookie"""
     try:
-        cookie_file = get_cookie_file_path(site_name, account_index)
-        if os.path.exists(cookie_file):
-            with open(cookie_file, "r", encoding='utf-8') as f:
+        path = get_cookie_file_path(site_name, account_index)
+        if os.path.exists(path):
+            with open(path, "r", encoding='utf-8') as f:
                 content = f.read().strip()
-                # 处理可能的编码问题
-                if content:
-                    return content
-    except UnicodeDecodeError:
-        # 如果UTF-8解码失败，尝试其他编码
-        try:
-            with open(cookie_file, "r", encoding='gbk') as f:
-                content = f.read().strip()
-                if content:
-                    return content
-        except:
-            pass
-    except Exception as e:
-        print(f"从文件读取Cookie失败: {e}")
+                if content: return content
+    except: pass
     return ""
 
 def save_cookie_to_file(site_name, cookie_str, account_index=None):
-    """将Cookie保存到文件"""
     try:
-        cookie_file = get_cookie_file_path(site_name, account_index)
-        os.makedirs(os.path.dirname(cookie_file), exist_ok=True)
-        
-        # 确保cookie_str是字符串，处理可能的编码问题
-        if isinstance(cookie_str, bytes):
-            cookie_str = cookie_str.decode('utf-8', errors='ignore')
-        
-        with open(cookie_file, "w", encoding='utf-8') as f:
+        path = get_cookie_file_path(site_name, account_index)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding='utf-8') as f:
             f.write(cookie_str)
-        print(f"Cookie 已成功保存到文件: {cookie_file}")
+        print(f"Cookie已保存: {path}")
         return True
     except Exception as e:
-        print(f"保存Cookie到文件失败: {e}")
+        print(f"保存Cookie失败: {e}")
         return False
+
+# === 核心业务逻辑 ===
+
+def create_session(cookie_str=None):
+    """创建一个预配置的 Session 对象"""
+    session = requests.Session()
+    session.headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "zh-CN,zh;q=0.9",
+    }
+    if cookie_str:
+        for cookie in cookie_str.split('; '):
+            if '=' in cookie:
+                k, v = cookie.split('=', 1)
+                session.cookies.set(k, v)
+    return session
 
 def check_cookie_validity(site_config, cookie_str):
-    """检查Cookie是否有效"""
     try:
-        headers = {
-            "Cookie": cookie_str,
-            "Origin": site_config["origin"],
-            "Referer": site_config["board_url"],
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        }
-        
-        # 尝试访问用户信息页面
-        response = requests.get(
-            f"{site_config['stats_api']}1",
-            headers=headers,
-            verify=False,
-            timeout=10
+        session = create_session(cookie_str)
+        # 1. 预访问主页 (GET)
+        session.get(
+            site_config['board_url'], 
+            impersonate="chrome124", 
+            timeout=15
         )
-        
-        # 正确处理响应编码，特别是中文字符
-        if response.encoding is None:
-            response.encoding = 'utf-8'
-        
-        # 确保响应文本正确解码，处理所有可能的编码问题
-        try:
-            response_text = response.text
-        except UnicodeDecodeError as decode_error:
-            # 如果默认编码失败，尝试其他常见编码
-            try:
-                response.encoding = 'gbk'
-                response_text = response.text
-            except UnicodeDecodeError:
-                try:
-                    response.encoding = 'gb2312'
-                    response_text = response.text
-                except UnicodeDecodeError:
-                    # 如果所有编码都失败，使用原始字节内容
-                    response_text = response.content.decode('utf-8', errors='ignore')
-        
-        # 检查响应状态和内容
-        if response.status_code != 200:
-            return False
-            
-        # 更宽松的Cookie有效性检查
-        # 只要返回200状态码且不是明显的错误页面，就认为Cookie有效
+        # 2. 验证 API
+        response = session.get(
+            f"{site_config['stats_api']}1",
+            impersonate="chrome124", 
+            timeout=15
+        )
         if response.status_code == 200:
-            # 检查是否是有效的JSON响应
             try:
                 data = response.json()
-                if data.get("success") is not None:
-                    return True
-            except:
-                pass
-            
-            # 检查是否包含有效内容标识
-            valid_indicators = ["credit", "balance", "amount", "success", "data", "message"]
-            for indicator in valid_indicators:
-                if indicator in response_text.lower():
-                    return True
-            
-            # 如果包含常见的错误标识，则返回False
-            error_indicators = ["error", "invalid", "unauthorized", "forbidden", "login", "signin"]
-            for indicator in error_indicators:
-                if indicator in response_text.lower():
-                    return False
-            
-            # 默认认为有效（避免过于严格的检查导致频繁重新登录）
-            return True
-            
+                if data.get("success") is not None: return True
+            except: pass
+            text = response.text.lower()
+            if "credit" in text or "balance" in text or "success" in text:
+                return True
         return False
-        
     except Exception as e:
-        print(f"检查Cookie有效性时出错: {e}")
         return False
 
-def auto_login_with_captcha(site_config, username, password):
-    """自动登录并解决验证码"""
+def auto_login(site_config, username, password):
     try:
-        # 获取CloudFreed配置
-        cloudfreed_api_key = os.getenv("CLOUDFREED_API_KEY", "")
-        cloudfreed_base_url = os.getenv("CLOUDFREED_BASE_URL", "http://localhost:3000")
-        
-        if not cloudfreed_api_key:
-            print("错误：未配置 CLOUDFREED_API_KEY 环境变量")
-            print("请按照以下步骤配置：")
-            print("1. 部署CloudFreed服务：docker run -itd --name cloudflyer -p 3000:3000 --restart unless-stopped jackzzs/cloudflyer -K 你的客户端密钥 -H 0.0.0.0")
-            print("2. 设置环境变量 CLOUDFREED_API_KEY=你的客户端密钥")
-            print("3. 如果服务不在本地，设置 CLOUDFREED_BASE_URL=http://服务IP:3000")
+        api_key = os.getenv("CLOUDFREED_API_KEY", "")
+        base_url = os.getenv("CLOUDFREED_BASE_URL", "http://localhost:3000")
+        if not api_key:
+            print("错误：未配置 CLOUDFREED_API_KEY")
             return None
             
-        # 初始化验证码解决器
-        solver = TurnstileSolver(
-            api_base_url=cloudfreed_base_url,
-            client_key=cloudfreed_api_key
-        )
+        solver = TurnstileSolver(api_base_url=base_url, client_key=api_key)
+        session = create_session() 
         
-        # 检查服务可用性
-        try:
-            if not solver.health_check():
-                print("警告：CloudFreed 服务不可用，自动登录功能将无法使用")
-                print("请检查：")
-                print("1. CloudFreed服务是否正常运行")
-                print("2. 服务地址是否正确（CLOUDFREED_BASE_URL环境变量）")
-                print("3. 网络连接是否正常")
-                return None
-        except Exception as e:
-            print(f"CloudFreed 服务检查失败: {e}")
-            print("错误：CloudFreed 服务不可用，自动登录功能将无法使用")
-            return None
+        # 1. 访问登录页
+        session.get(site_config["login_url"], impersonate="chrome124")
         
-        # 为每个登录尝试创建新的独立会话
-        session = requests.Session()
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Origin": site_config["origin"],
-            "Referer": site_config["login_url"]
-        }
-        
-        # 获取登录页面内容
-        login_page_response = session.get(
-            site_config["login_url"],
-            headers=headers,
-            verify=False,
-            timeout=10
-        )
-        
-        if login_page_response.status_code != 200:
-            print(f"获取登录页面失败: {login_page_response.status_code}")
-            return None
-        
-        # 解决Turnstile验证码
-        print("正在解决CloudFlare Turnstile验证码...")
+        # 2. 解决验证码
+        print("正在解决验证码...")
         token = solver.solve(
             site_config["login_url"],
             site_config["sitekey"],
-            user_agent=headers["User-Agent"],
-            verbose=True
+            user_agent=session.headers["User-Agent"],
+            verbose=False 
         )
-        
         if not token:
-            print("验证码解决失败")
+            print("验证码失败")
             return None
         
-        # 执行登录
+        # 3. 登录请求
         login_data = {
             "username": username,
             "password": password,
             "token": token,
             "source": "turnstile"
         }
-        
-        # 添加JSON请求头
-        login_headers = headers.copy()
-        login_headers["Content-Type"] = "application/json"
-        
-        login_response = session.post(
+        headers = {
+            "Origin": site_config["origin"],
+            "Referer": site_config["login_url"],
+            "Content-Type": "application/json"
+        }
+        resp = session.post(
             site_config["login_api"],
             json=login_data,
-            headers=login_headers,
-            verify=False,
-            timeout=10
+            headers=headers,
+            impersonate="chrome124",
+            timeout=15
         )
         
-        if login_response.status_code == 200:
-            # 获取cookie
-            cookies = session.cookies
-            cookie_str = "; ".join([f"{name}={value}" for name, value in cookies.items()])
-            
-            # 打印登录响应和Cookie信息用于调试
-            print(f"登录响应状态码: {login_response.status_code}")
-            try:
-                login_data = login_response.json()
-                print(f"登录响应数据: {login_data}")
-            except:
-                print(f"登录响应内容: {login_response.text[:200]}")
-            print(f"获取到的Cookie: {cookie_str}")
-            
-            # 验证登录是否成功
-            if check_cookie_validity(site_config, cookie_str):
-                print(f"自动登录成功，已获取新Cookie")
-                return cookie_str
-            else:
-                print("登录成功但Cookie验证失败，尝试直接使用Cookie")
-                # 即使验证失败，也返回Cookie尝试使用
-                return cookie_str
+        if resp.status_code == 200:
+            cookies = session.cookies.get_dict()
+            cookie_str = "; ".join([f"{k}={v}" for k, v in cookies.items()])
+            print(f"登录成功")
+            return cookie_str
         else:
-            print(f"登录请求失败: {login_response.status_code}")
-            try:
-                error_data = login_response.json()
-                print(f"登录错误信息: {error_data}")
-            except:
-                print(f"登录响应内容: {login_response.text[:200]}")
+            print(f"登录失败: {resp.status_code}")
             return None
             
     except Exception as e:
-        print(f"自动登录过程中出错: {e}")
+        print(f"登录异常: {e}")
         return None
 
-def get_valid_cookie(site_config, username, password, account_index=None):
-    """获取有效的Cookie，如果失效则自动登录"""
-    # 首先尝试从文件读取（按账号索引读取）
-    cookie_str = load_cookies_from_file(site_config["name"].lower(), account_index)
-    
-    # 如果文件没有，尝试从环境变量获取Cookie
-    if not cookie_str:
-        cookie_str = os.getenv(site_config["cookie_var"], "")
-    
-    # 检查Cookie是否有效
-    if cookie_str and check_cookie_validity(site_config, cookie_str):
-        print(f"{site_config['name']} 账号{account_index if account_index else ''} Cookie有效，直接使用")
-        return cookie_str
-    
-    # Cookie失效，尝试自动登录
-    print(f"{site_config['name']} 账号{account_index if account_index else ''} Cookie已失效，尝试自动登录...")
-    
-    if not username or not password:
-        print("用户名或密码未配置，无法自动登录")
-        return None
-    
-    new_cookie = auto_login_with_captcha(site_config, username, password)
-    
-    if new_cookie:
-        # 保存新Cookie到文件（按账号索引保存）
-        save_cookie_to_file(site_config["name"].lower(), new_cookie, account_index)
-        return new_cookie
-    else:
-        print("自动登录失败")
-        return None
-
-# ---------------- 签到逻辑 ----------------
 def sign(cookie, site_config, ns_random):
-    if not cookie:
-        return "invalid", "无有效Cookie"
-        
-    headers = {
-        'User-Agent': "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 Edg/125.0.0.0",
-        'origin': site_config["origin"],
-        'referer': site_config["board_url"],
-        'Content-Type': 'application/json',
-        'Cookie': cookie
-    }
+    if not cookie: return "fail", "无Cookie"
+    
     try:
+        session = create_session(cookie)
+        
+        # 1. 模拟浏览 (GET) - 预热
+        session.get(
+            site_config["board_url"],
+            headers={"Referer": site_config["origin"]},
+            impersonate="chrome124",
+            timeout=15
+        )
+        
+        time.sleep(random.uniform(2, 4))
+        
+        # 2. 签到 (POST)
         url = f"{site_config['sign_api']}?random={ns_random}"
-        response = requests.post(url, headers=headers)
-        data = response.json()
+        headers = {
+            'Origin': site_config["origin"],
+            'Referer': site_config["board_url"],
+            'Content-Type': 'application/json'
+        }
+        
+        resp = session.post(url, headers=headers, impersonate="chrome124", timeout=15)
+        
+        try:
+            data = resp.json()
+        except:
+            if "Just a moment" in resp.text:
+                return "fail", "被WAF拦截"
+            return "fail", f"未知响应 (Code {resp.status_code})"
+
         msg = data.get("message", "")
-        if "鸡腿" in msg or data.get("success"):
-            return "success", msg
-        elif "已完成签到" in msg:
-            return "already", msg
-        elif data.get("status") == 404:
-            return "invalid", msg
+        if "鸡腿" in msg or data.get("success"): return "success", msg
+        elif "已完成签到" in msg: return "already", msg
+        elif data.get("status") == 404: return "invalid", msg
         return "fail", msg
+        
     except Exception as e:
         return "error", str(e)
 
-# ---------------- 查询签到收益统计函数 ----------------
-def get_signin_stats(cookie, site_config, days=30):
-    """查询前days天内的签到收益统计"""
-    if not cookie:
-        return None, "无有效Cookie"
-    
-    if days <= 0:
-        days = 1
-    
-    headers = {
-        'User-Agent': "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36 Edg/125.0.0.0",
-        'origin': site_config["origin"],
-        'referer': site_config["board_url"],
-        'Cookie': cookie
-    }
-    
+def get_stats(cookie, site_config, days=30):
+    if not cookie: return None
     try:
+        session = create_session(cookie)
+        
+        # === 修复点：统计接口也需要预热访问 ===
+        session.get(
+            site_config["board_url"],
+            headers={"Referer": site_config["origin"]},
+            impersonate="chrome124",
+            timeout=15
+        )
+        # ================================
+        
         shanghai_tz = ZoneInfo("Asia/Shanghai")
-        now_shanghai = datetime.now(shanghai_tz)
-        query_start_time = now_shanghai - timedelta(days=days)
+        now = datetime.now(shanghai_tz)
+        start_time = now - timedelta(days=days)
         
         all_records = []
         page = 1
         
-        while page <= 20:
-            url = f"{site_config['stats_api']}{page}"
-            response = requests.get(url, headers=headers)
-            data = response.json()
-            
-            if not data.get("success") or not data.get("data"):
-                break
-                
-            records = data.get("data", [])
-            if not records:
-                break
-                
-            last_record_time = datetime.fromisoformat(
-                records[-1][3].replace('Z', '+00:00'))
-            last_record_time_shanghai = last_record_time.astimezone(shanghai_tz)
-            if last_record_time_shanghai < query_start_time:
-                for record in records:
-                    record_time = datetime.fromisoformat(
-                        record[3].replace('Z', '+00:00'))
-                    record_time_shanghai = record_time.astimezone(shanghai_tz)
-                    if record_time_shanghai >= query_start_time:
-                        all_records.append(record)
-                break
-            else:
-                all_records.extend(records)
-                
-            page += 1
-            time.sleep(0.5)
-        
-        signin_records = []
-        for record in all_records:
-            amount, balance, description, timestamp = record
-            record_time = datetime.fromisoformat(
-                timestamp.replace('Z', '+00:00'))
-            record_time_shanghai = record_time.astimezone(shanghai_tz)
-            
-            if (record_time_shanghai >= query_start_time and
-                    "签到收益" in description and "鸡腿" in description):
-                signin_records.append({
-                    'amount': amount,
-                    'date': record_time_shanghai.strftime('%Y-%m-%d'),
-                    'description': description
-                })
-        
-        period_desc = f"近{days}天"
-        if days == 1:
-            period_desc = "今天"
-        
-        if not signin_records:
-            return {
-                'total_amount': 0,
-                'average': 0,
-                'days_count': 0,
-                'records': [],
-                'period': period_desc,
-            }, f"查询成功，但没有找到{period_desc}的签到记录"
-        
-        total_amount = sum(record['amount'] for record in signin_records)
-        days_count = len(signin_records)
-        average = round(total_amount / days_count, 2) if days_count > 0 else 0
-        
-        stats = {
-            'total_amount': total_amount,
-            'average': average,
-            'days_count': days_count,
-            'records': signin_records,
-            'period': period_desc
+        # 增加 Referer 头，防止直接访问 API 被拒
+        headers = {
+            "Referer": site_config["board_url"],
+            "Origin": site_config["origin"]
         }
         
-        return stats, "查询成功"
+        while page <= 10: 
+            url = f"{site_config['stats_api']}{page}"
+            resp = session.get(url, headers=headers, impersonate="chrome124", timeout=10)
+            try:
+                data = resp.json()
+            except: break
+            
+            if not data.get("success") or not data.get("data"): break
+            records = data.get("data", [])
+            if not records: break
+            
+            all_records.extend(records)
+            page += 1
+            time.sleep(0.5)
+            
+        valid_records = []
+        for r in all_records:
+            try:
+                amt, _, desc, ts = r
+                dt = datetime.fromisoformat(ts.replace('Z', '+00:00')).astimezone(shanghai_tz)
+                if dt >= start_time and ("签到" in desc or "鸡腿" in desc):
+                    valid_records.append({'amount': amt, 'date': dt.strftime('%Y-%m-%d')})
+            except: continue
+            
+        total = sum(r['amount'] for r in valid_records)
+        count = len(valid_records)
+        avg = round(total/count, 2) if count > 0 else 0
         
-    except Exception as e:
-        return None, f"查询异常: {str(e)}"
+        return {'total': total, 'avg': avg, 'days': count, 'period': f"近{days}天"}
+    except: return None
 
-# ---------------- 显示签到统计信息 ----------------
-def print_signin_stats(stats, account_name):
-    """打印签到统计信息"""
-    if not stats:
-        return
-        
-    print(f"\n==== {account_name} 签到收益统计 ({stats['period']}) ====")
-    print(f"签到天数: {stats['days_count']} 天")
-    print(f"总获得鸡腿: {stats['total_amount']} 个")
-    print(f"平均每日鸡腿: {stats['average']} 个")
-
-# ---------------- 解析用户名配置 ----------------
-def parse_usernames(usernames_str):
-    """解析用户名配置字符串"""
-    if not usernames_str:
-        return []
-    
-    # 支持多种分隔符：& | , ;
-    usernames = re.split(r'[&|,;]', usernames_str)
-    return [name.strip() for name in usernames if name.strip()]
-
-def parse_accounts_from_cookie(cookie_str):
-    """从Cookie字符串解析账号信息"""
-    if not cookie_str:
-        return [], []
-    
-    # 格式：用户名1&密码1&用户名2&密码2
-    parts = cookie_str.split("&")
-    parts = [part.strip() for part in parts if part.strip()]
-    
-    usernames = []
-    passwords = []
-    
-    # 每两个元素为一组：用户名和密码
-    for i in range(0, len(parts), 2):
-        if i + 1 < len(parts):
-            usernames.append(parts[i])
-            passwords.append(parts[i + 1])
-    
-    return usernames, passwords
-
-# ---------------- 处理单个站点 ----------------
+# === 主逻辑 ===
 def process_site(site_name, site_config, ns_random):
-    """处理单个站点的签到"""
-    print(f"\n{'='*50}")
-    print(f"开始处理 {site_config['name']} 站点")
-    print(f"{'='*50}")
+    print(f"\n{'='*30}\n处理站点: {site_config['name']}\n{'='*30}")
     
-    env_type = detect_environment()
-    
-    # 从Cookie环境变量解析账号信息
-    cookie_str = os.getenv(site_config["cookie_var"], "")
-    custom_usernames, passwords = parse_accounts_from_cookie(cookie_str)
-    
-    # 优先从文件读取Cookie，如果文件不存在则使用环境变量
-    valid_cookie_list = []
-    
-    # 检查每个账号的Cookie文件
-    for i in range(len(custom_usernames)):
-        if i < len(passwords):
-            account_index = i + 1
-            # 尝试从文件读取Cookie
-            file_cookie = load_cookies_from_file(site_name, account_index)
-            if file_cookie:
-                print(f"账号{account_index} 从文件加载Cookie成功")
-                valid_cookie_list.append(file_cookie)
-            else:
-                # 如果文件没有Cookie，尝试从环境变量获取
-                if i < len(cookie_str.split("&")) // 2:
-                    cookie_parts = cookie_str.split("&")
-                    if len(cookie_parts) > i * 2:
-                        env_cookie = cookie_parts[i * 2].strip()
-                        if env_cookie:
-                            valid_cookie_list.append(env_cookie)
-                            print(f"账号{account_index} 从环境变量加载Cookie")
-                        else:
-                            valid_cookie_list.append("")  # 占位，后续自动登录
-                else:
-                    valid_cookie_list.append("")  # 占位，后续自动登录
-    
-    # 如果没有找到任何Cookie但有用户名密码，尝试自动登录
-    if not any(valid_cookie_list) and custom_usernames and passwords:
-        print("未找到Cookie配置，但检测到用户名密码配置，尝试自动登录...")
-        # 确保用户名和密码数量匹配
-        min_accounts = min(len(custom_usernames), len(passwords))
-        for i in range(min_accounts):
-            username = custom_usernames[i]
-            password = passwords[i]
-            print(f"尝试为 {username} 自动登录...")
-            new_cookie = get_valid_cookie(site_config, username, password, i+1)
-            if new_cookie:
-                valid_cookie_list[i] = new_cookie
-    
-    print(f"共配置 {len(custom_usernames)} 个账号，有效Cookie {len([c for c in valid_cookie_list if c])} 个")
-    if custom_usernames:
-        print(f"自定义用户名: {custom_usernames}")
+    env_cookie = os.getenv(site_config["cookie_var"], "")
+    parts = [p.strip() for p in env_cookie.split("&") if p.strip()]
+    users, pwds = parts[0::2], parts[1::2]
     
     site_results = []
     
-    for i, cookie in enumerate(valid_cookie_list):
-        account_index = i + 1
+    for i in range(len(users)):
+        idx = i + 1
+        user = users[i]
+        pwd = pwds[i] if i < len(pwds) else None
         
-        # 确定显示名称：优先使用自定义用户名，否则使用默认名称
-        if i < len(custom_usernames):
-            display_user = custom_usernames[i]
-            print(f"\n==== {site_config['name']} {display_user} 开始签到 ====")
+        print(f"\n--- 账号: {user} ---")
+        
+        cookie = load_cookies_from_file(site_name, idx)
+        
+        if cookie:
+            if not check_cookie_validity(site_config, cookie):
+                print("Cookie已失效，尝试重新登录...")
+                cookie = None
         else:
-            display_user = f"账号{account_index}"
-            print(f"\n==== {site_config['name']} {display_user} 开始签到 ====")
-        
-        # 如果cookie为空，尝试从文件读取
+            print("无本地Cookie，尝试登录...")
+            
+        if not cookie and pwd:
+            cookie = auto_login(site_config, user, pwd)
+            if cookie: save_cookie_to_file(site_name, cookie, idx)
+            
         if not cookie:
-            file_cookie = load_cookies_from_file(site_name, account_index)
-            if file_cookie:
-                cookie = file_cookie
-                print(f"从文件加载Cookie成功")
-        
-        # 检查Cookie是否有效，如果失效则尝试自动登录
-        if not cookie or not check_cookie_validity(site_config, cookie):
-            print(f"{display_user} Cookie无效或失效，尝试自动登录...")
-            if i < len(custom_usernames) and i < len(passwords):
-                username = custom_usernames[i]
-                password = passwords[i]
-                new_cookie = get_valid_cookie(site_config, username, password, i+1)
-                if new_cookie:
-                    cookie = new_cookie
-                    print(f"自动登录成功，使用新Cookie")
-                else:
-                    print(f"自动登录失败，跳过该账号")
-                    site_results.append({
-                        'account': display_user,
-                        'status': 'failed',
-                        'message': 'Cookie失效且自动登录失败',
-                        'stats': None
-                    })
-                    continue
-            else:
-                print(f"无法自动登录：缺少用户名或密码配置")
-                site_results.append({
-                    'account': display_user,
-                    'status': 'failed',
-                    'message': 'Cookie失效且无法自动登录',
-                    'stats': None
-                })
-                continue
-        
-        result, msg = sign(cookie, site_config, ns_random)
-
-        if result in ["success", "already"]:
-            print(f"{display_user} 签到成功: {msg}")
+            print("放弃: 无法获取有效Cookie")
+            site_results.append({'user': user, 'status': 'fail', 'msg': '登录失败'})
+            continue
             
-            print("正在查询签到收益统计...")
-            stats, stats_msg = get_signin_stats(cookie, site_config, 30)
+        status, msg = sign(cookie, site_config, ns_random)
+        print(f"签到结果: {msg}")
+        
+        stats = None
+        if status in ["success", "already"]:
+            stats = get_stats(cookie, site_config)
             if stats:
-                print_signin_stats(stats, display_user)
-            else:
-                print(f"统计查询失败: {stats_msg}")
-            
-            site_results.append({
-                'account': display_user,
-                'status': 'success',
-                'message': msg,
-                'stats': stats
-            })
-            
-        else:
-            print(f"{display_user} 签到失败: {msg}")
-            site_results.append({
-                'account': display_user,
-                'status': 'failed',
-                'message': msg,
-                'stats': None
-            })
-    
-    # 发送汇总通知（每天只发送一次）
+                print(f"统计: {stats['days']}天 | 总收益:{stats['total']} | 平均:{stats['avg']}")
+                
+        site_results.append({'user': user, 'status': status, 'msg': msg, 'stats': stats})
+
+    # 发送通知
     if hadsend and should_send_notification(site_name):
-        try:
-            success_count = len([r for r in site_results if r['status'] == 'success'])
-            failed_count = len([r for r in site_results if r['status'] != 'success'])
+        msg_lines = []
+        for r in site_results:
+            line = f"{r['user']}: {r['msg']}"
+            if r.get('stats'):
+                line += f" (近30天: {r['stats']['total']}个)"
+            msg_lines.append(line)
             
-            notification_msg = f"{site_config['name']} 签到汇总\n"
-            notification_msg += f"成功: {success_count} 个账号\n"
-            if failed_count > 0:
-                notification_msg += f"失败: {failed_count} 个账号\n"
-            
-            # 添加成功账号的详细信息
-            for result in site_results:
-                if result['status'] == 'success':
-                    notification_msg += f"\n{result['account']}: {result['message']}"
-                    if result['stats']:
-                        stats = result['stats']
-                        notification_msg += f"\n  {stats['period']}已签到{stats['days_count']}天，共获得{stats['total_amount']}个鸡腿"
-            
-            # 添加失败账号信息
-            for result in site_results:
-                if result['status'] != 'success':
-                    notification_msg += f"\n{result['account']}: {result['message']}"
-            
-            send(f"{site_config['name']} 签到汇总", notification_msg)
+        if msg_lines:
+            notify_content = f"{site_config['name']} 汇总\n" + "\n".join(msg_lines)
+            send(f"{site_config['name']} 签到", notify_content)
             mark_notification_sent(site_name)
-            print(f"已发送 {site_config['name']} 汇总通知")
-        except Exception as e:
-            print(f"发送通知失败: {e}")
+            print("通知已推送")
+    else:
+        print("今日已通知过，跳过推送")
 
-# ---------------- 主流程 ----------------
 if __name__ == "__main__":
+    print("脚本启动...")
     ns_random = os.getenv("NS_RANDOM", "true")
-
-    env_type = detect_environment()
-    print(f"当前运行环境: {env_type}")
-    print("Cookie多账户签到脚本启动")
-    
-    # 处理所有配置的站点
-    for site_name, site_config in SITES_CONFIG.items():
-        try:
-            process_site(site_name, site_config, ns_random)
-        except Exception as e:
-            print(f"处理 {site_config['name']} 站点时发生异常: {e}")
-    
-    print(f"\n{'='*50}")
-    print("所有站点处理完成")
-    print(f"{'='*50}")
+    for name, config in SITES_CONFIG.items():
+        try: process_site(name, config, ns_random)
+        except Exception as e: print(f"站点异常: {e}")
