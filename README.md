@@ -17,12 +17,17 @@
 在运行脚本前，需要安装必要的依赖包：
 
 ```bash
-pip install -r requirements.txt
+curl_cffi
+python-dotenv
+requests
 ```
+依赖说明：
 
-依赖包包括：
-- `requests>=2.25.0` - HTTP请求库
-- `curl-cffi>=0.5.0` - 高性能HTTP客户端（可选，已兼容标准requests）
+curl-cffi (核心): 必须安装。用于模拟 Chrome 浏览器指纹 (TLS/JA3)，解决 Cloudflare 403 拦截问题。
+
+python-dotenv: 用于加载 .env 配置文件。
+
+requests: 用于通知推送等基础 HTTP 请求。
 
 ## ✨ 特性
 
