@@ -70,8 +70,10 @@ TG_BOT_TOKEN=你的Telegram机器人Token
 TG_USER_ID=你的Telegram用户ID
 
 # 账号密码配置（格式：用户名1&密码1&用户名2&密码2）
-NS_COOKIE=你的NodeSeek用户名1&你的NodeSeek密码1&你的NodeSeek用户名2&你的NodeSeek密码2
-DF_COOKIE=你的DeepFlood用户名1&你的DeepFlood密码1&你的DeepFlood用户名2&你的DeepFlood密码2
+NS_COOKIE=完整Cookie1&完整Cookie2
+DF_COOKIE=完整Cookie1&完整Cookie2
+NS_USER_PASS=你的NodeSeek用户名1&你的NodeSeek密码1&你的NodeSeek用户名2&你的NodeSeek密码2
+DF_USER_PASS=你的DeepFlood用户名1&你的DeepFlood密码1&你的DeepFlood用户名2&你的DeepFlood密码2
 
 # CloudFreed验证码服务配置（必须配置）
 CLOUDFREED_API_KEY=你的CloudFreed客户端密钥
