@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         NodeSeek / DeepFlood Cookie 同步到青龙
 // @namespace    https://github.com/local/ns-df-cookie-sync
-// @version      1.0.0
-// @description  抓取 NodeSeek / DeepFlood 登录 Cookie（含 HttpOnly），按账号合并后同步到青龙面板的 NS_COOKIE / DF_COOKIE 环境变量
+// @version      2.1.0
+// @description  抓取 NodeSeek / DeepFlood 登录 Cookie（含 HttpOnly、含父域 cf_clearance/session），以青龙远端值为基准按账号(uid)合并，跨浏览器不覆盖，仅在登录态变化时自动同步并通知
 // @author       you
 // @match        https://www.nodeseek.com/*
 // @match        https://www.deepflood.com/*
@@ -112,21 +112,38 @@
     });
   }
 
-  // 读取当前站点全部 Cookie（含 HttpOnly），拼成 "k=v; k2=v2" 字符串
-  function getSiteCookieString() {
-    return new Promise((resolve, reject) => {
-      GM_cookie.list({ domain: location.hostname }, (cookies, err) => {
-        if (err) return reject(new Error('GM_cookie 读取失败: ' + err));
-        if (!cookies || !cookies.length) return resolve('');
-        // 去重（同名取后者），过滤空值
-        const map = {};
-        cookies.forEach((c) => { if (c && c.name) map[c.name] = c.value; });
-        const str = Object.keys(map)
-          .map((k) => `${k}=${map[k]}`)
-          .join('; ');
-        resolve(str);
+  // GM_cookie.list 的 Promise 包装
+  function listCookies(query) {
+    return new Promise((resolve) => {
+      try {
+        GM_cookie.list(query, (cookies, err) => resolve(err ? [] : (cookies || [])));
+      } catch (e) { resolve([]); }
+    });
+  }
+
+  // 读取当前站点全部 Cookie（含 HttpOnly、含挂在父域 .nodeseek.com 上的 cf_clearance/session）
+  // 拼成 "k=v; k2=v2" 字符串
+  async function getSiteCookieString() {
+    // 用 url 查询可拿到当前 URL 适用的全部 cookie（含父域）；
+    // 再按 hostname、根域各查一次做并集，尽量不漏。
+    const rootDomain = location.hostname.split('.').slice(-2).join('.'); // nodeseek.com
+    const results = await Promise.all([
+      listCookies({ url: location.origin + '/' }),
+      listCookies({ domain: location.hostname }),
+      listCookies({ domain: rootDomain }),
+    ]);
+
+    const map = {};
+    results.forEach((list) => {
+      list.forEach((c) => {
+        if (!c || !c.name) return;
+        // 同名时优先保留非空值；父域/子域重复以后写入为准
+        if (c.value !== undefined && c.value !== '') map[c.name] = c.value;
+        else if (!(c.name in map)) map[c.name] = c.value;
       });
     });
+
+    return Object.keys(map).map((k) => `${k}=${map[k]}`).join('; ');
   }
   // ===== 青龙 OpenAPI =====
   async function qlToken() {
@@ -177,16 +194,6 @@
       }
     } catch (e) { /* 启用失败不影响主流程 */ }
   }
-  // ===== 多账号本地存储 =====
-  // 结构: GM_setValue('cookies_' + env, { "账号标识": "cookie串", ... })
-  function storeKey() { return 'cookies_' + SITE.env; }
-
-  function loadStore() {
-    try { return JSON.parse(GM_getValue(storeKey(), '{}')) || {}; }
-    catch (e) { return {}; }
-  }
-  function saveStore(obj) { GM_setValue(storeKey(), JSON.stringify(obj)); }
-
   // base64url 解码（兼容 UTF-8 中文）
   function b64urlDecode(str) {
     str = str.replace(/-/g, '+').replace(/_/g, '/');
@@ -232,57 +239,132 @@
     return null;
   }
 
-  function mergeCookies(store) {
-    return Object.keys(store)
-      .filter((k) => store[k])
-      .map((k) => store[k])
-      .join('&');
+  // 从任意 cookie 串取 uid（用于对远端已有值按账号拆分），取不到返回 null
+  function uidOf(cookieStr) {
+    const p = parsePjwt(cookieStr);
+    return p && p.id ? String(p.id) : null;
   }
 
-  // ===== 主同步流程 =====
-  async function syncCurrent() {
+  // 登录态指纹：只取关键登录字段，忽略高频变动的 fog/hmti_/colorscheme 等。
+  // 用于判断“登录态是否真的变了”，避免每次开页面都重复同步。
+  function loginSignature(cookieStr) {
+    const pick = ['session', 'pjwt'];
+    const parts = [];
+    pick.forEach((k) => {
+      const m = cookieStr.match(new RegExp('(?:^|;\\s*)' + k + '=([^;]+)'));
+      if (m) parts.push(k + '=' + m[1]);
+    });
+    return parts.join('|');
+  }
+
+  // 把青龙里已有的 env 值（uid1cookie&uid2cookie&...）拆成 { uid: cookie }
+  // 无法识别 uid 的老数据用占位 key 保留，避免误删
+  function splitRemote(remoteValue) {
+    const map = {};
+    let anon = 0;
+    (remoteValue || '').split('&').forEach((part) => {
+      part = part.trim();
+      if (!part) return;
+      const uid = uidOf(part);
+      map[uid ? 'uid_' + uid : 'legacy_' + (anon++)] = part;
+    });
+    return map;
+  }
+
+  function mergeMap(map) {
+    return Object.keys(map).filter((k) => map[k]).map((k) => map[k]).join('&');
+  }
+
+  // ===== 主同步流程（以青龙远端值为基准合并，跨浏览器不覆盖）=====
+  let syncing = false;
+  async function syncCurrent(opts) {
+    opts = opts || {};
+    if (syncing) return;
+    syncing = true;
     try {
       const cookieStr = await getSiteCookieString();
       if (!cookieStr || !/=/.test(cookieStr)) {
-        toast('未读取到有效 Cookie，请先登录再同步');
+        if (!opts.silent) toast('未读取到有效 Cookie，请先登录再同步');
         return;
       }
 
       let info = detectAccountName(cookieStr);
       if (!info) {
-        const manual = prompt('无法自动识别账号，请为当前账号输入一个唯一标识（如账号名，用于区分多账号）', '账号1');
+        if (opts.silent) return; // 自动模式下识别不到就不打扰
+        const manual = prompt('无法自动识别账号，请为当前账号输入唯一标识（如账号名）', '账号1');
         if (!manual) return;
         info = { key: manual, name: manual };
       }
 
-      const store = loadStore();
-      store[info.key] = cookieStr;
-      saveStore(store);
+      // 关键 cookie 完整性检查（缺 session/cf_clearance 时签到可能失败）
+      const missing = ['session', 'cf_clearance'].filter((k) => !new RegExp('(?:^|;\\s*)' + k + '=').test(cookieStr));
+      if (missing.length && !opts.silent) {
+        toast('⚠️ 注意：未读取到 ' + missing.join('、') + '，请确认已登录并通过人机验证');
+      }
 
-      const merged = mergeCookies(store);
-      const accCount = Object.keys(store).filter((k) => store[k]).length;
+      // 只在关键登录态发生变化时才同步：
+      // 提取 session + pjwt 作为指纹，忽略 fog/hmti_/cf_clearance 等高频变动字段。
+      // 指纹不变 = 登录态没变（青龙那份仍可用）→ 跳过，不请求青龙、不通知。
+      const sig = loginSignature(cookieStr);
+      const lastKey = 'last_sig_' + SITE.env + '_' + info.key;
+      const changed = GM_getValue(lastKey, '') !== sig;
 
-      toast(`正在同步 ${SITE.label} - ${info.name}（本地共 ${accCount} 个账号）...`);
+      if (opts.silent && !changed) return; // 自动模式：登录态未变，静默跳过
+
+      if (!opts.silent) {
+        if (!changed) toast(`ℹ️ ${info.name} 登录态未变化，仍执行一次同步...`);
+        else toast(`正在同步 ${SITE.label} - ${info.name} ...`);
+      }
 
       const token = await qlToken();
       const existing = await qlGetEnv(token, SITE.env);
-      await qlSaveEnv(token, existing, SITE.env, merged);
 
-      toast(`✅ ${SITE.label} 已同步到青龙 ${SITE.env}（${accCount} 个账号）`);
+      // 关键：以远端现有值为基准，仅更新/新增当前账号那一份
+      const map = splitRemote(existing ? existing.value : '');
+      map[info.key] = cookieStr;
+      const merged = mergeMap(map);
+      const accCount = Object.keys(map).filter((k) => map[k]).length;
+
+      await qlSaveEnv(token, existing, SITE.env, merged);
+      GM_setValue(lastKey, sig);
+
+      // 无论手动/自动，真正同步后都通知一次（自动模式仅在登录态变化时才会走到这里）
+      const prefix = (opts.silent && changed) ? '🔄 登录态更新，已自动同步' : '✅ 已同步';
+      toast(`${prefix} ${SITE.label} - ${info.name}（远端共 ${accCount} 个账号）`);
     } catch (e) {
-      toast('❌ 同步失败: ' + e.message);
+      if (!opts.silent) toast('❌ 同步失败: ' + e.message);
+      else console.warn('[CookieSync] 自动同步失败:', e.message);
+    } finally {
+      syncing = false;
     }
   }
 
-  function clearStore() {
-    if (confirm(`确定清空本地缓存的 ${SITE.label}（${SITE.env}）多账号 Cookie 吗？\n（不会影响青龙里已同步的值）`)) {
-      saveStore({});
-      toast('已清空本地缓存');
-    }
+  // 自动同步开关（默认开启）
+  function autoEnabled() { return GM_getValue('auto_sync', true); }
+  function toggleAuto() {
+    const v = !autoEnabled();
+    GM_setValue('auto_sync', v);
+    toast('自动同步已' + (v ? '开启' : '关闭'));
   }
 
   // ===== 菜单 =====
-  GM_registerMenuCommand(`🍪 同步当前 ${SITE.label} Cookie 到青龙`, syncCurrent);
+  GM_registerMenuCommand(`🍪 立即同步当前 ${SITE.label} Cookie`, () => syncCurrent());
   GM_registerMenuCommand('⚙️ 配置青龙面板', configQinglong);
-  GM_registerMenuCommand(`🗑️ 清空本地 ${SITE.label} 多账号缓存`, clearStore);
+  GM_registerMenuCommand('🔄 开关自动同步', toggleAuto);
+
+  // ===== 自动同步：登录后（检测到 pjwt）自动推送，cookie 未变则跳过 =====
+  async function autoSync() {
+    if (!autoEnabled()) return;
+    if (!cfg.url || !cfg.id || !cfg.secret) return; // 未配置青龙则不打扰
+    const cookieStr = await getSiteCookieString();
+    if (!cookieStr || !uidOf(cookieStr)) return;    // 未登录/识别不到账号
+    syncCurrent({ silent: true });
+  }
+
+  // 首次进入延迟触发，给页面/cookie 一点加载时间
+  setTimeout(autoSync, 3000);
+  // 页面重新可见时（如切回标签页、登录跳转后）再查一次
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') autoSync();
+  });
 })();
