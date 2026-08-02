@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         NodeSeek / DeepFlood Cookie 同步到青龙
 // @namespace    https://github.com/local/ns-df-cookie-sync
-// @version      2.1.0
-// @description  抓取 NodeSeek / DeepFlood 登录 Cookie（含 HttpOnly、含父域 cf_clearance/session），以青龙远端值为基准按账号(uid)合并，跨浏览器不覆盖，仅在登录态变化时自动同步并通知
+// @version      2.4.0
+// @description  抓取 NodeSeek / DeepFlood 登录 Cookie（含 HttpOnly、含父域 cf_clearance/session），以青龙远端值为基准按账号(uid)合并，跨浏览器不覆盖；登录态变化立即同步，否则每天保底自动同步一次
 // @author       you
 // @match        https://www.nodeseek.com/*
 // @match        https://www.deepflood.com/*
@@ -124,23 +124,49 @@
   // 读取当前站点全部 Cookie（含 HttpOnly、含挂在父域 .nodeseek.com 上的 cf_clearance/session）
   // 拼成 "k=v; k2=v2" 字符串
   async function getSiteCookieString() {
-    // 用 url 查询可拿到当前 URL 适用的全部 cookie（含父域）；
-    // 再按 hostname、根域各查一次做并集，尽量不漏。
-    const rootDomain = location.hostname.split('.').slice(-2).join('.'); // nodeseek.com
-    const results = await Promise.all([
-      listCookies({ url: location.origin + '/' }),
-      listCookies({ domain: location.hostname }),
-      listCookies({ domain: rootDomain }),
-    ]);
+    const host = location.hostname;                       // www.nodeseek.com
+    const rootDomain = host.split('.').slice(-2).join('.'); // nodeseek.com
+
+    // 多种查询做并集：{} 无过滤最全（含 HttpOnly/父域），其余作兜底
+    const queries = [
+      {},
+      { url: location.origin + '/' },
+      { domain: host },
+      { domain: rootDomain },
+      { domain: '.' + rootDomain },
+      // 按关键 cookie 名精确查询（部分 Tampermonkey 版本对 cf_clearance 需按名查才返回）
+      { name: 'cf_clearance', domain: rootDomain },
+      { name: 'cf_clearance', domain: '.' + rootDomain },
+      { name: 'cf_clearance', url: location.origin + '/' },
+      { name: 'session', domain: host },
+    ];
+    const results = await Promise.all(queries.map(listCookies));
+
+    // 仅保留属于当前站点的 cookie（domain 匹配 host 或其父域）
+    const belongs = (d) => {
+      if (!d) return false;
+      const dd = d.replace(/^\./, '');
+      return host === dd || host.endsWith('.' + dd) || dd === rootDomain;
+    };
 
     const map = {};
     results.forEach((list) => {
       list.forEach((c) => {
         if (!c || !c.name) return;
-        // 同名时优先保留非空值；父域/子域重复以后写入为准
+        if (c.domain && !belongs(c.domain)) return; // 过滤掉别的网站的 cookie
         if (c.value !== undefined && c.value !== '') map[c.name] = c.value;
         else if (!(c.name in map)) map[c.name] = c.value;
       });
+    });
+
+    // 兜底：GM_cookie 拿不到的（如某些非 HttpOnly），用 document.cookie 补齐
+    (document.cookie || '').split(/;\s*/).forEach((kv) => {
+      const i = kv.indexOf('=');
+      if (i > 0) {
+        const k = kv.slice(0, i).trim();
+        const v = kv.slice(i + 1).trim();
+        if (k && !(k in map) && v) map[k] = v;
+      }
     });
 
     return Object.keys(map).map((k) => `${k}=${map[k]}`).join('; ');
@@ -299,17 +325,26 @@
       // 关键 cookie 完整性检查（缺 session/cf_clearance 时签到可能失败）
       const missing = ['session', 'cf_clearance'].filter((k) => !new RegExp('(?:^|;\\s*)' + k + '=').test(cookieStr));
       if (missing.length && !opts.silent) {
-        toast('⚠️ 注意：未读取到 ' + missing.join('、') + '，请确认已登录并通过人机验证');
+        toast('⚠️ 注意：未读取到 ' + missing.join('、') + '，将尽量保留青龙里旧值中的该字段');
+      }
+      // session 缺失属于致命错误：绝不推送，避免覆盖青龙里可用的旧 cookie
+      if (/(?:^|;\s*)session=/.test(cookieStr) === false) {
+        if (!opts.silent) toast('❌ 未读取到 session，已放弃同步（防止覆盖青龙可用值）。请确认已登录并开启 Beta 版 HttpOnly 读取');
+        return;
       }
 
-      // 只在关键登录态发生变化时才同步：
-      // 提取 session + pjwt 作为指纹，忽略 fog/hmti_/cf_clearance 等高频变动字段。
-      // 指纹不变 = 登录态没变（青龙那份仍可用）→ 跳过，不请求青龙、不通知。
+      // 同步策略（方案C）：
+      //   1) 登录态(session+pjwt)变化 → 立即同步
+      //   2) 登录态未变，但今天还没同步过 → 每天保底同步一次（顺便更新 cf_clearance）
+      //   3) 登录态未变且今天已同步过 → 静默跳过
       const sig = loginSignature(cookieStr);
       const lastKey = 'last_sig_' + SITE.env + '_' + info.key;
+      const dayKey = 'last_day_' + SITE.env + '_' + info.key;
+      const today = new Date().toLocaleDateString('sv');  // YYYY-MM-DD（本地时区）
       const changed = GM_getValue(lastKey, '') !== sig;
+      const syncedToday = GM_getValue(dayKey, '') === today;
 
-      if (opts.silent && !changed) return; // 自动模式：登录态未变，静默跳过
+      if (opts.silent && !changed && syncedToday) return; // 登录态没变且今天已推过 → 跳过
 
       if (!opts.silent) {
         if (!changed) toast(`ℹ️ ${info.name} 登录态未变化，仍执行一次同步...`);
@@ -321,15 +356,29 @@
 
       // 关键：以远端现有值为基准，仅更新/新增当前账号那一份
       const map = splitRemote(existing ? existing.value : '');
-      map[info.key] = cookieStr;
+
+      // 安全阀：若本次抓取缺 cf_clearance，但远端该账号旧值里有，则保留旧的 cf_clearance
+      let finalCookie = cookieStr;
+      if (!/(?:^|;\s*)cf_clearance=/.test(finalCookie)) {
+        const old = map[info.key] || '';
+        const m = old.match(/(?:^|;\s*)(cf_clearance=[^;]+)/);
+        if (m) {
+          finalCookie = finalCookie + '; ' + m[1];
+          if (!opts.silent) toast('ℹ️ 已从旧值补回 cf_clearance');
+        }
+      }
+
+      map[info.key] = finalCookie;
       const merged = mergeMap(map);
       const accCount = Object.keys(map).filter((k) => map[k]).length;
 
       await qlSaveEnv(token, existing, SITE.env, merged);
       GM_setValue(lastKey, sig);
+      GM_setValue(dayKey, today);  // 记录今日已同步，供每日保底判断
 
-      // 无论手动/自动，真正同步后都通知一次（自动模式仅在登录态变化时才会走到这里）
-      const prefix = (opts.silent && changed) ? '🔄 登录态更新，已自动同步' : '✅ 已同步';
+      // 同步完成后通知：区分「登录态更新」和「每日保底同步」
+      let prefix = '✅ 已同步';
+      if (opts.silent) prefix = changed ? '🔄 登录态更新，已自动同步' : '📅 每日保底，已自动同步';
       toast(`${prefix} ${SITE.label} - ${info.name}（远端共 ${accCount} 个账号）`);
     } catch (e) {
       if (!opts.silent) toast('❌ 同步失败: ' + e.message);
@@ -347,8 +396,47 @@
     toast('自动同步已' + (v ? '开启' : '关闭'));
   }
 
+  // 预览当前抓到的完整 cookie（用于确认 session/cf_clearance 是否齐全）
+  async function previewCookie() {
+    const cookieStr = await getSiteCookieString();
+    const names = cookieStr.split(/;\s*/).map((s) => s.split('=')[0]).filter(Boolean);
+    const has = (k) => names.includes(k);
+    const report =
+      `本站抓取到 ${names.length} 个 cookie：\n${names.join(', ')}\n\n` +
+      `关键字段检查：\n` +
+      `  session      ${has('session') ? '✅' : '❌ 缺失'}\n` +
+      `  cf_clearance ${has('cf_clearance') ? '✅' : '❌ 缺失'}\n` +
+      `  pjwt         ${has('pjwt') ? '✅' : '❌ 缺失'}\n\n` +
+      `完整值（可复制核对）：\n${cookieStr}`;
+
+    if (document.getElementById('cs-preview-panel')) return;
+    const mask = document.createElement('div');
+    mask.id = 'cs-preview-panel';
+    mask.style.cssText =
+      'position:fixed;inset:0;z-index:2147483647;background:rgba(0,0,0,.45);' +
+      'display:flex;align-items:center;justify-content:center;';
+    const box = document.createElement('div');
+    box.style.cssText =
+      'width:560px;max-width:92vw;max-height:80vh;overflow:auto;background:#fff;color:#222;' +
+      'border-radius:10px;padding:18px;font-family:system-ui,sans-serif;font-size:13px;';
+    const ta = document.createElement('textarea');
+    ta.readOnly = true;
+    ta.value = report;
+    ta.style.cssText = 'width:100%;height:320px;box-sizing:border-box;font-family:monospace;font-size:12px;';
+    const btn = document.createElement('button');
+    btn.textContent = '关闭';
+    btn.style.cssText = 'margin-top:10px;padding:6px 16px;border:none;background:#2d7ff9;color:#fff;border-radius:6px;cursor:pointer;';
+    btn.onclick = () => mask.remove();
+    box.appendChild(ta);
+    box.appendChild(btn);
+    mask.appendChild(box);
+    mask.addEventListener('click', (e) => { if (e.target === mask) mask.remove(); });
+    document.body.appendChild(mask);
+  }
+
   // ===== 菜单 =====
   GM_registerMenuCommand(`🍪 立即同步当前 ${SITE.label} Cookie`, () => syncCurrent());
+  GM_registerMenuCommand('🔍 预览将同步的 Cookie', previewCookie);
   GM_registerMenuCommand('⚙️ 配置青龙面板', configQinglong);
   GM_registerMenuCommand('🔄 开关自动同步', toggleAuto);
 
