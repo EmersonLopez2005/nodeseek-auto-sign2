@@ -5,6 +5,7 @@ import time
 import json
 import random
 import re
+import hashlib
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -22,6 +23,16 @@ try:
 except ImportError:
     print("警告：验证码解决器模块未找到")
     TurnstileSolver = None
+
+# Playwright 浏览器登录
+try:
+    from browser_login import browser_login, browser_sign, PLAYWRIGHT_AVAILABLE
+    if PLAYWRIGHT_AVAILABLE:
+        print("成功加载 Playwright 浏览器登录模块")
+except ImportError:
+    PLAYWRIGHT_AVAILABLE = False
+    browser_login = None
+    browser_sign = None
 
 # 环境变量
 try:
@@ -42,6 +53,7 @@ except ImportError:
 SITES_CONFIG = {
     "nodeseek": {
         "name": "NodeSeek",
+        "type": "nodeseek",
         "sign_api": "https://www.nodeseek.com/api/attendance",
         "stats_api": "https://www.nodeseek.com/api/account/credit/page-",
         "board_url": "https://www.nodeseek.com/board",
@@ -54,22 +66,47 @@ SITES_CONFIG = {
         "pass_var": "NS_PASS",
         "account_var": "NS_USER_PASS"
     },
-    "deepflood": {
-        "name": "DeepFlood",
-        "sign_api": "https://www.deepflood.com/api/attendance",
-        "stats_api": "https://www.deepflood.com/api/account/credit/page-",
-        "board_url": "https://www.deepflood.com/board",
-        "origin": "https://www.deepflood.com",
-        "cookie_var": "DF_COOKIE",
-        "login_url": "https://www.deepflood.com/signIn.html",
-        "login_api": "https://www.deepflood.com/api/account/signIn",
-        "ns_login_url": "https://www.deepflood.com/nsSignIn.html",
-        "sitekey": "0x4AAAAAAAaNy7leGjewpVyR",
-        "user_var": "DF_USER",
-        "pass_var": "DF_PASS",
-        "account_var": "DF_USER_PASS"
+    "9nb": {
+        "name": "9nb",
+        "type": "bbs1org",
+        # 签到页（GET），返回 HTML
+        "sign_url": "https://9nb.de/index.php?a=daily_checkin",
+        # 校验用页面：访问后若未被重定向到登录页即视为已登录
+        "check_url": "https://9nb.de/index.php?a=daily_checkin",
+        "login_page": "https://9nb.de/index.php?a=login",
+        "login_post": "https://9nb.de/index.php?a=login",
+        "board_url": "https://9nb.de/index.php",
+        "origin": "https://9nb.de",
+        "cookie_var": "NB_COOKIE",
+        "user_var": "NB_USER",
+        "pass_var": "NB_PASS",
+        "account_var": "NB_USER_PASS"
     }
 }
+
+# === Refract 签名配置 ===
+REFRACT_KEY = "CHICZkKViFoZmVbIH1Y6"
+REFRACT_VERSION = "0.3.34"
+BROWSER_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+IMPERSONATE_VER = "chrome124"
+
+
+def compute_refract_sign(method, url, user_agent, body, refract_key):
+    """计算 refract-sign: SHA-1(method\\n\\nurl\\n\\nua\\n\\nbody\\n\\nkey)"""
+    sign_str = f"{method}\n\n{url}\n\n{user_agent}\n\n{body}\n\n{refract_key}"
+    return hashlib.sha1(sign_str.encode()).hexdigest()
+
+
+def make_refract_headers(method, url, body="", refract_key=None):
+    """生成 refract-sign / refract-version / refract-key 请求头"""
+    key = refract_key or REFRACT_KEY
+    sign = compute_refract_sign(method, url, BROWSER_UA, body, key)
+    return {
+        "refract-sign": sign,
+        "refract-version": REFRACT_VERSION,
+        "refract-key": key,
+    }
+
 
 # === 通知状态管理 ===
 NOTIFICATION_FILE = "./cookie/notification_status.json"
@@ -191,7 +228,7 @@ def create_session(cookie_str=None):
     """创建一个预配置的 Session 对象"""
     session = requests.Session()
     session.headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "User-Agent": BROWSER_UA,
         "Accept": "application/json, text/plain, */*",
         "Accept-Language": "zh-CN,zh;q=0.9",
     }
@@ -216,6 +253,9 @@ def response_looks_like_waf(response):
 
 def check_cookie_validity(site_config, cookie_str, retries=3):
     """返回 True=有效，False=明确无效，None=网络/WAF等不确定状态。"""
+    if site_config.get("type") == "bbs1org":
+        return bbs1org_check_validity(site_config, cookie_str, retries=retries)
+
     last_reason = ""
     for attempt in range(1, retries + 1):
         try:
@@ -285,37 +325,54 @@ def auto_login(site_config, username, password):
         session = create_session()
 
         # 1. 访问登录页
-        session.get(site_config["login_url"], impersonate="chrome124", timeout=15)
+        login_url = site_config["login_url"]
+        login_headers = {"Referer": site_config["origin"]}
+        login_headers.update(make_refract_headers("GET", login_url))
+        session.get(login_url, headers=login_headers, impersonate=IMPERSONATE_VER, timeout=15)
 
         # 2. 解决验证码
         print("正在解决验证码...")
         token = solver.solve(
-            site_config["login_url"],
+            login_url,
             site_config["sitekey"],
-            user_agent=session.headers["User-Agent"],
+            user_agent=BROWSER_UA,
             verbose=False
         )
         if not token:
             print("验证码失败")
             return None
 
-        # 3. 登录请求
-        login_data = {
-            "username": username,
-            "password": password,
-            "token": token,
-            "source": "turnstile"
-        }
+        # 3. 登录请求 - 根据站点区分字段
+        site_name = site_config.get("name", "").lower()
+        if "deepflood" in site_name:
+            # DeepFlood 不接受 token/source 字段
+            login_data = {
+                "username": username,
+                "password": password,
+            }
+        else:
+            # NodeSeek 需要 token
+            login_data = {
+                "username": username,
+                "password": password,
+                "token": token,
+                "source": "turnstile"
+            }
+
+        login_body = json.dumps(login_data)
+        login_api = site_config["login_api"]
         headers = {
             "Origin": site_config["origin"],
-            "Referer": site_config["login_url"],
+            "Referer": login_url,
             "Content-Type": "application/json"
         }
+        headers.update(make_refract_headers("POST", login_api, body=login_body))
+
         resp = session.post(
-            site_config["login_api"],
+            login_api,
             json=login_data,
             headers=headers,
-            impersonate="chrome124",
+            impersonate=IMPERSONATE_VER,
             timeout=15
         )
 
@@ -346,10 +403,15 @@ def deepflood_ns_login(account_index):
     try:
         session = create_session(ns_cookie)
         df_config = SITES_CONFIG["deepflood"]
+        ns_login_url = df_config["ns_login_url"]
+
+        headers = {"Referer": df_config["login_url"]}
+        headers.update(make_refract_headers("GET", ns_login_url))
+
         resp = session.get(
-            df_config["ns_login_url"],
-            headers={"Referer": df_config["login_url"]},
-            impersonate="chrome124",
+            ns_login_url,
+            headers=headers,
+            impersonate=IMPERSONATE_VER,
             timeout=20,
             allow_redirects=True
         )
@@ -370,8 +432,245 @@ def deepflood_ns_login(account_index):
         return None
 
 
+# === 9nb (bbs1org) 专用逻辑 ===
+def create_html_session(cookie_str=None):
+    """创建适合访问 9nb 这类返回 HTML 的论坛的 Session。"""
+    session = requests.Session()
+    session.headers = {
+        "User-Agent": BROWSER_UA,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "zh-CN,zh;q=0.9",
+    }
+    if cookie_str:
+        for cookie in re.split(r";\s*", cookie_str):
+            if '=' in cookie:
+                k, v = cookie.split('=', 1)
+                session.cookies.set(k.strip(), v.strip())
+    return session
+
+
+def bbs1org_is_login_page(text):
+    """判断返回的 HTML 是否为登录页（表示未登录 / Cookie 失效）。"""
+    if not text:
+        return True
+    lowered = text.lower()
+    markers = [
+        'a=login', 'name="password"', 'name="username"',
+        '请使用用户名登录', '密码区分大小写', 'name="bbs_csrf"',
+    ]
+    return any(m.lower() in lowered for m in markers)
+
+
+def bbs1org_check_validity(site_config, cookie_str, retries=3):
+    """访问签到页，若未被重定向到登录页则视为 Cookie 有效。
+    返回 True=有效，False=明确失效，None=不确定。"""
+    check_url = site_config.get("check_url") or site_config.get("sign_url")
+    last_reason = ""
+    for attempt in range(1, retries + 1):
+        try:
+            session = create_html_session(cookie_str)
+            headers = {"Referer": site_config["origin"] + "/"}
+            resp = session.get(
+                check_url,
+                headers=headers,
+                impersonate=IMPERSONATE_VER,
+                timeout=20,
+                allow_redirects=True
+            )
+
+            if response_looks_like_waf(resp):
+                last_reason = "疑似 WAF/Cloudflare 页面"
+                print(f"9nb Cookie校验第{attempt}次遇到{last_reason}，暂不判定失效")
+                time.sleep(random.uniform(2, 4))
+                continue
+
+            final_url = str(resp.url).lower()
+            if "a=login" in final_url:
+                print("9nb 被重定向到登录页，判定Cookie无效")
+                return False
+
+            if resp.status_code == 200:
+                if bbs1org_is_login_page(resp.text):
+                    print("9nb 返回登录页内容，判定Cookie无效")
+                    return False
+                return True
+
+            if resp.status_code in (401, 403):
+                print(f"9nb Cookie校验返回 {resp.status_code}，判定Cookie无效")
+                return False
+
+            last_reason = f"HTTP {resp.status_code}"
+            print(f"9nb Cookie校验第{attempt}次失败: {last_reason}")
+        except Exception as e:
+            last_reason = str(e)
+            print(f"9nb Cookie校验第{attempt}次异常: {last_reason}")
+
+        if attempt < retries:
+            time.sleep(random.uniform(2, 4))
+
+    print(f"9nb Cookie校验多次失败但无法确认失效: {last_reason}")
+    return None
+
+
+def bbs1org_parse_stats_cookie(session):
+    """解析 __daily_checkin_stats cookie: uid.date.streak.x.x"""
+    try:
+        raw = session.cookies.get("__daily_checkin_stats")
+        if not raw:
+            return None
+        parts = raw.split(".")
+        info = {"raw": raw}
+        if len(parts) >= 2:
+            info["uid"] = parts[0]
+            info["date"] = parts[1]
+        if len(parts) >= 3:
+            info["streak"] = parts[2]
+        return info
+    except Exception:
+        return None
+
+
+def bbs1org_sign(cookie, site_config):
+    """9nb 签到：GET 签到页，根据返回 HTML 与 __daily_checkin_stats 判断结果。"""
+    if not cookie:
+        return "fail", "无Cookie"
+    try:
+        session = create_html_session(cookie)
+        sign_url = site_config["sign_url"]
+        headers = {"Referer": site_config["origin"] + "/"}
+
+        resp = session.get(
+            sign_url,
+            headers=headers,
+            impersonate=IMPERSONATE_VER,
+            timeout=20,
+            allow_redirects=True
+        )
+
+        if response_looks_like_waf(resp):
+            return "fail", "被WAF拦截"
+
+        final_url = str(resp.url).lower()
+        if "a=login" in final_url or bbs1org_is_login_page(resp.text):
+            return "invalid", "未登录/Cookie失效"
+
+        text = resp.text or ""
+        today = datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y-%m-%d")
+        stats = bbs1org_parse_stats_cookie(session)
+
+        # 依据 __daily_checkin_stats 中的日期判断今天是否已签
+        if stats and stats.get("date") == today:
+            streak = stats.get("streak", "")
+            suffix = f"（连续{streak}天）" if streak else ""
+            # 页面文案区分“已签到” vs “刚签到成功”
+            if any(k in text for k in ["已签到", "已经签到", "今日已", "已完成"]):
+                return "already", f"今日已签到{suffix}"
+            return "success", f"签到成功{suffix}"
+
+        # 页面文案兜底判断
+        if any(k in text for k in ["签到成功", "打卡成功", "success"]):
+            return "success", "签到成功"
+        if any(k in text for k in ["已签到", "已经签到", "今日已", "已完成"]):
+            return "already", "今日已签到"
+
+        return "fail", f"未知响应 (Code {resp.status_code})"
+    except Exception as e:
+        return "error", str(e)
+
+
+def bbs1org_extract_csrf(text):
+    """从登录页 HTML 中提取 CSRF 隐藏字段。9nb 使用 <input name="_csrf" value="...">，
+    值与 bbs_csrf cookie 相同。返回 (字段名, 值) 或 (None, None)。"""
+    if not text:
+        return None, None
+    csrf_names = ("_csrf", "bbs_csrf", "csrf_token", "csrf", "_token", "token")
+    names_pat = "|".join(csrf_names)
+    patterns = [
+        r'name=["\'](' + names_pat + r')["\']\s+[^>]*?value=["\']([^"\']+)["\']',
+        r'value=["\']([^"\']+)["\']\s+[^>]*?name=["\'](' + names_pat + r')["\']',
+    ]
+    for pat in patterns:
+        m = re.search(pat, text, re.IGNORECASE)
+        if m:
+            g = m.groups()
+            if g[0].lower() in csrf_names:
+                return g[0], g[1]
+            return g[1], g[0]
+    return None, None
+
+
+def bbs1org_login(site_config, username, password):
+    """9nb 账号密码登录：GET 登录页取 _csrf，POST 表单，成功后返回 Cookie 字符串。"""
+    if not username or not password:
+        print("未配置9nb账号或密码，无法自动登录")
+        return None
+    try:
+        session = create_html_session()
+        login_page = site_config["login_page"]
+
+        page_resp = session.get(
+            login_page,
+            headers={"Referer": site_config["origin"] + "/"},
+            impersonate=IMPERSONATE_VER,
+            timeout=20,
+            allow_redirects=True
+        )
+        if response_looks_like_waf(page_resp):
+            print("9nb登录页遇到WAF/Cloudflare")
+            return None
+
+        csrf_name, csrf_val = bbs1org_extract_csrf(page_resp.text)
+        # 兜底：9nb 的 _csrf 值等于 bbs_csrf cookie，页面提取失败时用 cookie 补上
+        if not csrf_val:
+            csrf_val = session.cookies.get("bbs_csrf")
+            csrf_name = "_csrf"
+
+        # 9nb 登录表单字段：username / password / _csrf
+        login_data = {
+            "username": username,
+            "password": password,
+        }
+        if csrf_val:
+            login_data[csrf_name or "_csrf"] = csrf_val
+
+        headers = {
+            "Origin": site_config["origin"],
+            "Referer": login_page,
+            "Content-Type": "application/x-www-form-urlencoded",
+        }
+        resp = session.post(
+            site_config["login_post"],
+            data=login_data,
+            headers=headers,
+            impersonate=IMPERSONATE_VER,
+            timeout=20,
+            allow_redirects=True
+        )
+
+        if response_looks_like_waf(resp):
+            print("9nb登录请求遇到WAF/Cloudflare")
+            return None
+
+        # 登录成功标志：拿到 bbs_auth cookie 且再次校验有效
+        if session.cookies.get("bbs_auth"):
+            cookie_str = cookie_dict_to_str(session.cookies.get_dict())
+            if cookie_str and bbs1org_check_validity(site_config, cookie_str, retries=2) is True:
+                print("9nb 登录成功")
+                return cookie_str
+
+        print(f"9nb 登录失败: HTTP {resp.status_code}")
+        print(f"登录响应: {(resp.text or '')[:300]}")
+        return None
+    except Exception as e:
+        print(f"9nb 登录异常: {e}")
+        return None
+
+
 def sign(cookie, site_config, ns_random):
     if not cookie: return "fail", "无Cookie"
+
+    if site_config.get("type") == "bbs1org":
+        return bbs1org_sign(cookie, site_config)
 
     try:
         session = create_session(cookie)
@@ -415,6 +714,9 @@ def sign(cookie, site_config, ns_random):
 
 def get_stats(cookie, site_config, days=30):
     if not cookie: return None
+    if site_config.get("type") == "bbs1org":
+        # 9nb 无积分统计接口，跳过统计
+        return None
     try:
         session = create_session(cookie)
 
@@ -433,13 +735,12 @@ def get_stats(cookie, site_config, days=30):
         all_records = []
         page = 1
 
-        headers = {
-            "Referer": site_config["board_url"],
-            "Origin": site_config["origin"]
-        }
-
         while page <= 10:
             url = f"{site_config['stats_api']}{page}"
+            headers = {
+                "Referer": site_config["board_url"],
+                "Origin": site_config["origin"]
+            }
             resp = session.get(url, headers=headers, impersonate="chrome124", timeout=10)
             try:
                 data = resp.json()
@@ -477,6 +778,14 @@ def load_account_cookie(site_name, site_config, account_index):
 
 
 def recover_cookie(site_name, site_config, account_index, user, pwd):
+    if site_config.get("type") == "bbs1org":
+        # 9nb：账号密码登录
+        cookie = bbs1org_login(site_config, user, pwd)
+        if cookie:
+            save_cookie_to_file(site_name, cookie, account_index)
+            return cookie
+        return None
+
     if site_name == "deepflood":
         print("尝试通过NodeSeek一键登录恢复DeepFlood Cookie...")
         cookie = deepflood_ns_login(account_index)
@@ -485,10 +794,21 @@ def recover_cookie(site_name, site_config, account_index, user, pwd):
             return cookie
         print("DeepFlood一键登录失败，尝试账号密码登录...")
 
+    # 先尝试传统 API 登录
     cookie = auto_login(site_config, user, pwd)
     if cookie:
         save_cookie_to_file(site_name, cookie, account_index)
-    return cookie
+        return cookie
+
+    # 传统登录失败，尝试 Playwright 浏览器登录
+    if PLAYWRIGHT_AVAILABLE and browser_login:
+        print("API登录失败，尝试 Playwright 浏览器登录...")
+        cookie = browser_login(site_config, user, pwd, headless=True)
+        if cookie:
+            save_cookie_to_file(site_name, cookie, account_index)
+            return cookie
+
+    return None
 
 
 def sign_failure_should_recover(status, msg):
